@@ -97,6 +97,25 @@ class ParserTests(unittest.TestCase):
         self.assertIn("battery", [item.name for item in device.exposes])
         self.assertIn("lightingColorCtrl", [item.cluster for item in device.from_zigbee])
 
+    def test_vendor_light_aliases_use_safe_light_expansion(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: [\"LEDVANCE\"],
+            model: \"LEDVANCE\",
+            vendor: \"Example\",
+            extend: [
+                ledvanceLight({colorTemp: {range: [153, 370]}, color: true}),
+                tuyaLight({colorTemp: {range: [153, 500]}}),
+            ],
+        }];
+        """
+        result = parse_source(source, "vendor_aliases.ts")
+        self.assertEqual(len(result.devices), 1)
+        device = result.devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.unsupported_macros, [])
+        self.assertGreaterEqual(len(device.exposes), 3)
+
     def test_runtime_temperature_report_is_scaled(self) -> None:
         source = (ROOT / "fixtures" / "simple_device.ts").read_text()
         device = parse_source(source).devices[0]

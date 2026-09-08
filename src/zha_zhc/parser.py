@@ -331,6 +331,12 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         return [], [], None, False
     name = str(call["__call__"]).rsplit(".", 1)[-1]
     args = _call_args(call)
+    if name in {"ledvanceLight", "tuyaLight"}:
+        name = "light"
+        if call["__call__"].endswith("ledvanceLight") and args.get("color") is True:
+            args = {**args, "color": {"modes": ["xy", "hs"]}}
+    elif name == "ledvanceOnOff":
+        name = "onOff"
     if name in _SUPPORTED_METADATA_MACROS:
         return [], [], name, True
     if name in _MODERN_EXTEND_SENSOR_MACROS:
