@@ -67,6 +67,7 @@ class ConfigureAction:
     operation: str
     endpoint: str | int | None = None
     cluster: str | int | None = None
+    attributes: tuple[str | int, ...] = ()
     target: str = "coordinator"
 
 

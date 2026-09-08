@@ -174,6 +174,61 @@ class ParserTests(unittest.TestCase):
             [(2, "genPowerCfg"), (2, "msTemperatureMeasurement")],
         )
 
+    def test_configure_reads_and_reporting_helpers_are_extracted(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["METER"],
+            model: "Meter",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await endpoint.read("haElectricalMeasurement", ["acPowerDivisor"]);
+                await reporting.readMeteringMultiplierDivisor(endpoint);
+                await reporting.readEletricalMeasurementMultiplierDivisors(endpoint, true);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-read.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.operation, item.cluster, item.attributes) for item in device.configure_actions],
+            [
+                ("read", "haElectricalMeasurement", ("acPowerDivisor",)),
+                ("read", "seMetering", ("multiplier", "divisor")),
+                (
+                    "read",
+                    "haElectricalMeasurement",
+                    (
+                        "acVoltageMultiplier",
+                        "acVoltageDivisor",
+                        "acCurrentMultiplier",
+                        "acCurrentDivisor",
+                        "acPowerMultiplier",
+                        "acPowerDivisor",
+                        "acFrequencyDivisor",
+                        "acFrequencyMultiplier",
+                    ),
+                ),
+            ],
+        )
+
+    def test_custom_electricity_converter_keeps_device_partial(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["METER"],
+            model: "Meter",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await reporting.readMeteringMultiplierDivisor(endpoint);
+            },
+            extend: [m.electricityMeter({fzElectricalMeasurement: local.electricalMeasurement})],
+        }];
+        """
+        device = parse_source(source, "custom-meter.ts").devices[0]
+        self.assertTrue(device.partial)
+        self.assertIn("dynamic-expression", device.unsupported_macros)
+
     def test_object_and_array_spreads_do_not_reject_static_definition(self) -> None:
         source = """
         const template = {vendor: "Example", exposes: [e.battery()]};

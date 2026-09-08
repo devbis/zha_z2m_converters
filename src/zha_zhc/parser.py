@@ -689,7 +689,7 @@ def _is_coordinator_endpoint(value: Any) -> bool:
 
 
 def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
-    """Extract a small whitelist of bind operations from a parsed callback."""
+    """Extract a small whitelist of bind and read operations from a callback."""
     if value is None or value == []:
         return [], False
     if not isinstance(value, dict) or "__configure__" not in value:
@@ -707,13 +707,45 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             base = statement["__fluent__"]
             endpoint = _configure_endpoint(base, locals_)
             for method in statement.get("methods", []):
-                if method.get("name") != "bind" or endpoint is None:
+                if method.get("name") not in {"bind", "read"} or endpoint is None:
                     unsupported = True
                     continue
                 args = method.get("args", [])
-                if len(args) != 2:
-                    unsupported = True
+                if method.get("name") == "bind":
+                    if len(args) != 2:
+                        unsupported = True
+                        continue
+                    if _is_coordinator_endpoint(args[0]):
+                        cluster = _static_value(args[1])
+                    elif _is_coordinator_endpoint(args[1]):
+                        cluster = _static_value(args[0])
+                    else:
+                        cluster = None
+                    if isinstance(cluster, (str, int)):
+                        actions.append(ConfigureAction("bind", endpoint, cluster))
+                    else:
+                        unsupported = True
                     continue
+                if len(args) == 2 and isinstance(args[1], list):
+                    cluster = _static_value(args[0])
+                    attributes = tuple(_static_value(item) for item in args[1])
+                    if isinstance(cluster, (str, int)) and all(isinstance(item, (str, int)) for item in attributes):
+                        actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes))
+                    else:
+                        unsupported = True
+                else:
+                    unsupported = True
+            continue
+        call = _call_name(statement)
+        args = statement.get("args", [])
+        if call and not call.startswith("reporting.") and call.rsplit(".", 1)[-1] in {"bind", "read"}:
+            method_name = call.rsplit(".", 1)[-1]
+            receiver = {"__identifier__": call.rsplit(".", 1)[0]}
+            endpoint = _configure_endpoint(receiver, locals_)
+            if endpoint is None:
+                unsupported = True
+                continue
+            if method_name == "bind" and len(args) == 2:
                 if _is_coordinator_endpoint(args[0]):
                     cluster = _static_value(args[1])
                 elif _is_coordinator_endpoint(args[1]):
@@ -724,10 +756,43 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                     actions.append(ConfigureAction("bind", endpoint, cluster))
                 else:
                     unsupported = True
+                continue
+            if method_name == "read" and len(args) == 2 and isinstance(args[1], list):
+                cluster = _static_value(args[0])
+                attributes = tuple(_static_value(item) for item in args[1])
+                if isinstance(cluster, (str, int)) and all(isinstance(item, (str, int)) for item in attributes):
+                    actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes))
+                else:
+                    unsupported = True
+                continue
+            unsupported = True
             continue
-        call = _call_name(statement)
+        if call == "reporting.readMeteringMultiplierDivisor":
+            endpoint = _configure_endpoint(args[0], locals_) if len(args) == 1 else None
+            if endpoint is None:
+                unsupported = True
+            else:
+                actions.append(ConfigureAction("read", endpoint, "seMetering", attributes=("multiplier", "divisor")))
+            continue
+        if call == "reporting.readEletricalMeasurementMultiplierDivisors":
+            endpoint = _configure_endpoint(args[0], locals_) if args and len(args) <= 2 else None
+            read_frequency = args[1] is True if len(args) == 2 else False
+            if endpoint is None or (len(args) == 2 and not isinstance(args[1], bool)):
+                unsupported = True
+            else:
+                attributes = (
+                    "acVoltageMultiplier",
+                    "acVoltageDivisor",
+                    "acCurrentMultiplier",
+                    "acCurrentDivisor",
+                    "acPowerMultiplier",
+                    "acPowerDivisor",
+                )
+                if read_frequency:
+                    attributes += ("acFrequencyDivisor", "acFrequencyMultiplier")
+                actions.append(ConfigureAction("read", endpoint, "haElectricalMeasurement", attributes=attributes))
+            continue
         if call == "reporting.bind":
-            args = statement.get("args", [])
             clusters = args[2] if len(args) == 3 else None
             endpoint = _configure_endpoint(args[0], locals_) if len(args) >= 1 else None
             if endpoint is None or len(args) != 3 or not _is_coordinator_endpoint(args[1]) or not isinstance(clusters, list):
@@ -765,6 +830,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
     configure_actions, configure_unsupported = _configure_actions(raw.get("configure"))
     extends: list[str] = []
     unsupported_macros: list[str] = []
+    dynamic_extend = False
     unsupported_fields = [
         str(key)
         for key, value in raw.items()
@@ -779,8 +845,15 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         generated_exposes, generated_from, name, supported = _modern_extend(item)
         if name and not supported:
             unsupported_macros.append(name)
+        if name == "electricityMeter":
+            args = _call_args(item)
+            dynamic_extend = dynamic_extend or any(
+                key.startswith(("fz", "tz")) and value is not None for key, value in args.items()
+            )
         exposes.extend(generated_exposes)
         from_zigbee.extend(generated_from)
+    if dynamic_extend:
+        unsupported_macros.append("dynamic-expression")
     partial = bool(unsupported_macros or unsupported_fields)
     for key in ("fromZigbee", "toZigbee", "exposes"):
         value = raw.get(key)

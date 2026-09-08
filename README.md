@@ -63,5 +63,6 @@ plan when adapting entities to the installed ZHA `QuirkBuilder`.
 Simple declarative configure callbacks are also represented in the plan. The
 initial whitelist includes endpoint-to-coordinator cluster binds written as
 `device.getEndpoint(1).bind(coordinatorEndpoint, "hvacThermostat")` or
-`reporting.bind(endpoint, coordinatorEndpoint, ["genPowerCfg"])`. Other
-callback statements remain marked as partial and are never executed.
+`reporting.bind(endpoint, coordinatorEndpoint, ["genPowerCfg"])`, endpoint
+attribute reads, and the common electrical-meter multiplier read helpers.
+Other callback statements remain marked as partial and are never executed.
