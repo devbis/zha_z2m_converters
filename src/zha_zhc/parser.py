@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +43,12 @@ class _ObjectParser:
             self.take("[")
             values = []
             while self.current().value != "]":
-                values.append(self.parse_value())
+                value_start = self.index
+                try:
+                    values.append(self.parse_value())
+                except UnsupportedSyntax:
+                    values.append({"__unsupported__": "array-item"})
+                    self.skip_to_object_boundary(value_start, boundaries=(",", "]"))
                 if self.current().value == ",":
                     self.take(",")
                 elif self.current().value != "]":
@@ -75,38 +80,94 @@ class _ObjectParser:
             while self.current().value in (".", "?."):
                 self.take()
                 parts.append(self.take().value)
+            if self.current().value == "<":
+                self.skip_balanced("<", ">")
             if self.current().value == "(":
-                self.take("(")
-                args = []
-                while self.current().value != ")":
-                    args.append(self.parse_value())
-                    if self.current().value == ",":
-                        self.take(",")
-                    elif self.current().value != ")":
-                        raise UnsupportedSyntax("expected comma in call")
-                self.take(")")
-                return {"__call__": ".".join(parts), "args": args}
+                value: Any = {"__call__": ".".join(parts), "args": self.parse_call_args()}
+                methods = []
+                while self.current().value in (".", "?."):
+                    self.take()
+                    method = self.take().value
+                    if self.current().value != "(":
+                        raise UnsupportedSyntax("property access after call is not static")
+                    methods.append({"name": method, "args": self.parse_call_args()})
+                return {"__fluent__": value, "methods": methods} if methods else value
             if self.constants and "." not in parts and name in self.constants:
                 return self.constants[name]
             return {"__identifier__": ".".join(parts)}
         raise UnsupportedSyntax(f"unsupported value {token.value!r}")
 
+    def parse_call_args(self) -> list[Any]:
+        self.take("(")
+        args = []
+        while self.current().value != ")":
+            args.append(self.parse_value())
+            if self.current().value == ",":
+                self.take(",")
+            elif self.current().value != ")":
+                raise UnsupportedSyntax("expected comma in call")
+        self.take(")")
+        return args
+
     def parse_object(self) -> dict[str, Any]:
         self.take("{")
         result: dict[str, Any] = {}
         while self.current().value != "}":
+            if self.current().value == ".":
+                value_start = self.index
+                self.skip_to_object_boundary(value_start)
+                result["<spread>"] = {"__unsupported__": "<spread>"}
+                if self.current().value == ",":
+                    self.take(",")
+                continue
             key = self.take()
             if key.kind not in ("identifier", "string", "number"):
                 raise UnsupportedSyntax("object key must be static")
             key_value = _decode_string(key.value) if key.kind == "string" else key.value
             self.take(":")
-            result[str(key_value)] = self.parse_value()
+            value_start = self.index
+            try:
+                result[str(key_value)] = self.parse_value()
+                if self.current().value not in (",", "}"):
+                    raise UnsupportedSyntax("unsupported expression after property value")
+            except UnsupportedSyntax:
+                # A definition may contain executable fields such as configure.
+                # Preserve the surrounding static object and mark only that field
+                # as unsupported instead of rejecting the whole device.
+                result[str(key_value)] = {"__unsupported__": str(key_value)}
+                self.skip_to_object_boundary(value_start)
             if self.current().value == ",":
                 self.take(",")
             elif self.current().value != "}":
                 raise UnsupportedSyntax("expected comma in object")
         self.take("}")
         return result
+
+    def skip_to_object_boundary(self, start: int, boundaries: tuple[str, ...] = (",", "}")) -> None:
+        """Skip one unsupported property value without crossing its object."""
+        stack: list[str] = []
+        pairs = {
+            ")": "(",
+            "]": "[",
+            "}": "{",
+        }
+        for token in self.tokens[start : self.index]:
+            if token.value in ("(", "[", "{"):
+                stack.append(token.value)
+            elif token.value in pairs and stack and stack[-1] == pairs[token.value]:
+                stack.pop()
+        while self.current().kind != "eof":
+            value = self.current().value
+            if not stack and value in boundaries:
+                return
+            if value in ("(", "[", "{"):
+                stack.append(value)
+            elif value in pairs:
+                if stack and stack[-1] == pairs[value]:
+                    stack.pop()
+                elif value in boundaries:
+                    return
+            self.take()
 
     def skip_balanced(self, opening: str, closing: str) -> None:
         self.take(opening)
@@ -206,6 +267,60 @@ def _call_name(value: Any) -> str | None:
 
 
 def _expose(value: Any) -> Expose | None:
+    if isinstance(value, dict) and "__fluent__" in value:
+        expose = _expose(value["__fluent__"])
+        if expose is None:
+            return None
+        supported_methods = {
+            "withUnit",
+            "withDescription",
+            "withValueMin",
+            "withValueMax",
+            "withValueStep",
+            "withEndpoint",
+            "withCategory",
+            "withAccess",
+            "setAccess",
+            "withProperty",
+            "withLabel",
+            "withBrightness",
+            "withColorTemp",
+            "withColor",
+            "withState",
+            "withFeature",
+            "withFeatures",
+            "withSetpoint",
+            "withLocalTemperature",
+            "withSystemMode",
+            "withRunningState",
+        }
+        for method in value.get("methods", []):
+            name = method.get("name")
+            args = method.get("args", [])
+            if name not in supported_methods:
+                return None
+            first = args[0] if args else None
+            if name == "withUnit":
+                expose = replace(expose, unit=_static_text(first))
+            elif name == "withDescription":
+                expose = replace(expose, description=_static_text(first))
+            elif name == "withValueMin" and isinstance(first, (int, float)):
+                expose = replace(expose, value_min=first)
+            elif name == "withValueMax" and isinstance(first, (int, float)):
+                expose = replace(expose, value_max=first)
+            elif name == "withValueStep" and isinstance(first, (int, float)):
+                expose = replace(expose, value_step=first)
+            elif name == "withEndpoint":
+                expose = replace(expose, endpoint=first if isinstance(first, (str, int)) else None)
+            elif name == "withCategory":
+                expose = replace(expose, category=_static_text(first))
+            elif name in {"withAccess", "setAccess"}:
+                access = _static_text(first)
+                if access:
+                    expose = replace(expose, access=tuple(access.lower().split("_")))
+            elif name == "withProperty":
+                expose = replace(expose, property=_static_text(first))
+        return expose
     if isinstance(value, dict) and "__call__" in value:
         call = str(value["__call__"]).rsplit(".", 1)[-1]
         args = value.get("args", [])
@@ -235,6 +350,23 @@ def _expose(value: Any) -> Expose | None:
             "text": "text",
             "button": "button",
             "action": "button",
+            "climate": "climate",
+            "fan": "fan",
+            "gas": "binary",
+            "smoke": "binary",
+            "water_leak": "binary",
+            "carbon_monoxide": "binary",
+            "tamper": "binary",
+            "battery_low": "binary",
+            "child_lock": "binary",
+            "power_apparent": "numeric",
+            "power_factor": "numeric",
+            "power_reactive": "numeric",
+            "device_temperature": "numeric",
+            "battery_voltage": "numeric",
+            "soil_moisture": "numeric",
+            "co2": "numeric",
+            "produced_energy": "numeric",
         }
         expose_type = aliases.get(call)
         if expose_type:
@@ -494,6 +626,11 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
     to_zigbee = _bindings(raw.get("toZigbee"), "command")
     extends: list[str] = []
     unsupported_macros: list[str] = []
+    unsupported_fields = [
+        str(key)
+        for key, value in raw.items()
+        if isinstance(value, dict) and "__unsupported__" in value
+    ]
     extend_values = raw.get("extend", []) if isinstance(raw.get("extend"), list) else []
     for item in extend_values:
         macro_name = _call_name(item)
@@ -504,7 +641,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
             unsupported_macros.append(name)
         exposes.extend(generated_exposes)
         from_zigbee.extend(generated_from)
-    partial = bool(unsupported_macros)
+    partial = bool(unsupported_macros or unsupported_fields)
     for key in ("fromZigbee", "toZigbee", "exposes"):
         value = raw.get(key)
         if isinstance(value, list) and any(isinstance(item, dict) and _is_dynamic_value(item, key) for item in value):
@@ -533,6 +670,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         to_zigbee=to_zigbee,
         extends=extends,
         unsupported_macros=unsupported_macros,
+        unsupported_fields=unsupported_fields,
         source=filename,
         source_line=token.line,
         partial=partial,
@@ -551,6 +689,8 @@ def _is_dynamic_value(value: dict[str, Any], key: str) -> bool:
         if key == "exposes":
             return _expose(value) is None
         return True
+    if "__fluent__" in value:
+        return key == "exposes" and _expose(value) is None
     return False
 
 
@@ -571,6 +711,9 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
         for raw in values:
             if not isinstance(raw, dict):
                 result.diagnostics.append(Diagnostic("warning", "unsupported-definition", "definition is not a static object", filename, token.line, token.column))
+                continue
+            if set(raw) == {"__unsupported__"}:
+                # A spread entry from an aggregate index is not a device object.
                 continue
             device = _device(raw, token, filename, result.diagnostics)
             if device:

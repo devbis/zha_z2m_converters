@@ -71,6 +71,7 @@ class DeviceDefinition:
     to_zigbee: list[Binding] = field(default_factory=list)
     extends: list[str] = field(default_factory=list)
     unsupported_macros: list[str] = field(default_factory=list)
+    unsupported_fields: list[str] = field(default_factory=list)
     source: str | None = None
     source_line: int | None = None
     partial: bool = False

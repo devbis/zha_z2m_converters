@@ -39,7 +39,9 @@ python3 scripts/coverage.py --json > coverage.json
 The report shows source files, total definitions, discovered definitions,
 fully supported definitions, partial definitions, rejected definitions, and
 aggregated unsupported converters or other problems. Use `--problem-limit` to
-control how many device-level problem entries are printed.
+control how many device-level problem entries are printed. Unsupported
+executable fields such as `configure` are retained as partial definitions when
+their static metadata can still be recovered; they are never executed.
 
 ## Runtime binding plan
 

@@ -44,6 +44,7 @@ class CoverageReport:
     diagnostics: dict[str, int] = field(default_factory=dict)
     partial_reasons: dict[str, int] = field(default_factory=dict)
     unsupported_macros: dict[str, int] = field(default_factory=dict)
+    unsupported_fields: dict[str, int] = field(default_factory=dict)
     unsupported_exposes: dict[str, int] = field(default_factory=dict)
     unsupported_converters: dict[str, int] = field(default_factory=dict)
     devices_with_problems: list[dict[str, Any]] = field(default_factory=list)
@@ -57,6 +58,7 @@ def build_report(result: ParseResult, problem_limit: int = 50) -> CoverageReport
     unsupported_exposes: Counter[str] = Counter()
     unsupported_converters: Counter[str] = Counter()
     unsupported_macros: Counter[str] = Counter()
+    unsupported_fields: Counter[str] = Counter()
     partial_reasons: Counter[str] = Counter()
     problem_devices: list[dict[str, Any]] = []
     fully_supported = 0
@@ -67,6 +69,8 @@ def build_report(result: ParseResult, problem_limit: int = 50) -> CoverageReport
         device_problems: list[str] = []
         unknown_converter = False
         if device.partial:
+            for field_name in device.unsupported_fields:
+                unsupported_fields[field_name] += 1
             partially_supported += 1
             for macro in device.unsupported_macros:
                 if macro != "dynamic-expression":
@@ -92,12 +96,17 @@ def build_report(result: ParseResult, problem_limit: int = 50) -> CoverageReport
         if unknown_converter and device.partial:
             partial_reasons["unsupported converter binding"] += 1
         if device.partial:
+            if device.unsupported_fields:
+                for field in device.unsupported_fields:
+                    device_problems.append(f"unsupported definition field: {field}")
             if unknown_converter:
                 device_problems.append("unsupported converter binding")
             elif device.unsupported_macros and device.unsupported_macros != ["dynamic-expression"]:
                 partial_reasons["unsupported extend macro"] += 1
                 macros = ", ".join(dict.fromkeys(device.unsupported_macros))
                 device_problems.append(f"unsupported extend macro: {macros}")
+            elif device.unsupported_fields:
+                partial_reasons["unsupported definition field"] += 1
             else:
                 partial_reasons["dynamic expose or other expression"] += 1
                 device_problems.append("dynamic expose or other expression")
@@ -120,6 +129,7 @@ def build_report(result: ParseResult, problem_limit: int = 50) -> CoverageReport
         diagnostics=dict(diagnostics.most_common()),
         partial_reasons=dict(partial_reasons.most_common()),
         unsupported_macros=dict(unsupported_macros.most_common()),
+        unsupported_fields=dict(unsupported_fields.most_common()),
         unsupported_exposes=dict(unsupported_exposes.most_common()),
         unsupported_converters=dict(unsupported_converters.most_common()),
         devices_with_problems=problem_devices,
@@ -143,6 +153,9 @@ def format_report(report: CoverageReport) -> str:
     if report.unsupported_macros:
         macros = ", ".join(f"{name} ({count})" for name, count in report.unsupported_macros.items())
         lines.append(f"\nUnsupported extend macros: {macros}")
+    if report.unsupported_fields:
+        fields = ", ".join(f"{name} ({count})" for name, count in report.unsupported_fields.items())
+        lines.append(f"\nUnsupported definition fields: {fields}")
     _append_section(lines, "Unsupported expose types", report.unsupported_exposes)
     _append_section(lines, "Unsupported converters", report.unsupported_converters)
     if report.devices_with_problems:

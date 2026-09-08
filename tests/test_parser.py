@@ -116,6 +116,40 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.unsupported_macros, [])
         self.assertGreaterEqual(len(device.exposes), 3)
 
+    def test_fluent_exposes_and_dynamic_fields_are_recovered_safely(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["CLIMATE"],
+            model: "Climate",
+            vendor: "Example",
+            exposes: [e.climate().withSetpoint("occupied_heating_setpoint", 7, 28, 0.5).withLocalTemperature()],
+            configure: async (device, coordinatorEndpoint) => {
+                await device.getEndpoint(1).bind(coordinatorEndpoint, "hvacThermostat");
+            },
+        }];
+        """
+        result = parse_source(source, "fluent.ts")
+        self.assertEqual(result.rejected_definitions, 0)
+        self.assertEqual(len(result.devices), 1)
+        self.assertEqual(result.devices[0].exposes[0].type, "climate")
+        self.assertTrue(result.devices[0].partial)
+        self.assertEqual(result.devices[0].unsupported_fields, ["configure"])
+
+    def test_object_and_array_spreads_do_not_reject_static_definition(self) -> None:
+        source = """
+        const template = {vendor: "Example", exposes: [e.battery()]};
+        export const definitions = [{
+            ...template,
+            zigbeeModel: ["SPREAD"],
+            model: "Spread",
+            exposes: [...template.exposes, e.contact()],
+        }];
+        """
+        result = parse_source(source, "spread.ts")
+        self.assertEqual(result.rejected_definitions, 0)
+        self.assertEqual(len(result.devices), 1)
+        self.assertEqual(result.devices[0].model, "Spread")
+
     def test_runtime_temperature_report_is_scaled(self) -> None:
         source = (ROOT / "fixtures" / "simple_device.ts").read_text()
         device = parse_source(source).devices[0]
