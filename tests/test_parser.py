@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from pathlib import Path
@@ -8,6 +9,8 @@ from unittest.mock import patch
 from zha_zhc.exporter import export_python
 from zha_zhc.mapping import normalize_device
 from zha_zhc.parser import parse_path, parse_source
+from zha_zhc.model import ConfigureAction
+from zha_zhc.runtime import _apply_configure_actions
 from zha_zhc.runtime import apply_report, build_runtime_plan, make_write, register_result
 from zha_zhc.runtime import register_with_zha, RuntimeReport
 
@@ -346,6 +349,54 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.configure_actions[0].cluster, "hvacThermostat")
         plan = build_runtime_plan(device)
         self.assertEqual(plan.configure_actions, device.configure_actions)
+
+    def test_static_configure_actions_execute_only_whitelisted_operations(self) -> None:
+        calls = []
+
+        class Cluster:
+            cluster_id = 0x0006
+
+            async def bind(self):
+                calls.append(("bind",))
+
+            async def read_attributes(self, attributes):
+                calls.append(("read", attributes))
+
+            async def configure_reporting(self, attribute, minimum, maximum, change):
+                calls.append(("reporting", attribute, minimum, maximum, change))
+
+        class Endpoint:
+            in_clusters = {0x0006: Cluster()}
+            out_clusters = {}
+
+        class ZigpyDevice:
+            endpoints = {1: Endpoint()}
+
+        class Device:
+            _zigpy_device = ZigpyDevice()
+
+        actions = (
+            ConfigureAction("bind", 1, "genOnOff"),
+            ConfigureAction("read", 1, "genOnOff", attributes=("onOff",)),
+            ConfigureAction(
+                "configure_reporting",
+                1,
+                "genOnOff",
+                attributes=("onOff",),
+                minimum_interval=0,
+                maximum_interval=3600,
+                reportable_change=0,
+            ),
+        )
+        asyncio.run(_apply_configure_actions(Device(), actions))
+        self.assertEqual(
+            calls,
+            [
+                ("bind",),
+                ("read", ["onOff"]),
+                ("reporting", "onOff", 0, 3600, 0),
+            ],
+        )
 
     def test_reporting_bind_and_endpoint_local_are_extracted(self) -> None:
         source = """

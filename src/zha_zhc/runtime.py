@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any
 
 from .mapping import normalize_device
 from .model import Binding, ConfigureAction, DeviceDefinition, Diagnostic, Expose, ParseResult
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 ZCL_CLUSTER_IDS: dict[str, int] = {
     "genOnOff": 0x0006,
     "on_off": 0x0006,
+    "genBasic": 0x0000,
+    "genScenes": 0x0005,
     "genLevelCtrl": 0x0008,
     "level_control": 0x0008,
     "genPowerCfg": 0x0001,
+    "genBinaryInput": 0x001F,
     "power_configuration": 0x0001,
     "genDeviceTempCfg": 0x0002,
     "msTemperatureMeasurement": 0x0402,
@@ -29,14 +36,17 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "illuminance_measurement": 0x0400,
     "lightingColorCtrl": 0x0300,
     "color_control": 0x0300,
+    "hvacThermostat": 0x0201,
+    "hvacFanCtrl": 0x0202,
+    "closuresWindowCovering": 0x0102,
+    "closuresDoorLock": 0x0101,
+    "ssIasZone": 0x0500,
     "electricalMeasurement": 0x0B04,
     "electrical_measurement": 0x0B04,
     "haElectricalMeasurement": 0x0B04,
     "metering": 0x0702,
     "seMetering": 0x0702,
-    "closuresWindowCovering": 0x0102,
     "window_covering": 0x0102,
-    "closuresDoorLock": 0x0101,
     "door_lock": 0x0101,
     "manuSpecificTuya3": 0xE001,
     "manuSpecificTuya": 0xEF00,
@@ -384,6 +394,7 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
         for signature in signatures:
             builder = builder_factory(signature["manufacturerName"], signature["modelID"])
             _prevent_unrepresented_default_entities(builder, plan)
+            _configure_builder_device_class(builder, plan.configure_actions)
             custom_clusters_ready = _configure_custom_clusters(builder, plan)
             for expose, entity in zip(device.exposes, plan.entities, strict=False):
                 if _requires_custom_cluster(plan, entity) and not custom_clusters_ready:
@@ -426,6 +437,99 @@ def _cluster_id(cluster: str | int | None) -> int | None:
         return cluster
     if isinstance(cluster, str):
         return ZCL_CLUSTER_IDS.get(cluster)
+    return None
+
+
+def _configure_builder_device_class(builder: Any, actions: list[ConfigureAction]) -> None:
+    """Attach the static configure action runner to a QuirkBuilder device."""
+    if not actions:
+        return
+    configure_class = _make_configure_device_class(actions)
+    if configure_class is None:
+        _LOGGER.warning("ZHA QuirkBuilder does not expose a custom device class hook")
+        return
+    set_device_class = getattr(builder, "zha_device_class", None)
+    if callable(set_device_class):
+        set_device_class(configure_class)
+    else:
+        legacy_set_device_class = getattr(builder, "device_class", None)
+        if callable(legacy_set_device_class):
+            legacy_set_device_class(configure_class)
+        else:
+            _LOGGER.warning("ZHA QuirkBuilder cannot install configure actions")
+
+
+def _make_configure_device_class(actions: list[ConfigureAction]) -> type[Any] | None:
+    try:
+        from zhaquirks.builder.device import QuirkV2Device  # type: ignore
+    except ImportError:
+        return None
+
+    static_actions = tuple(actions)
+
+    class DeclarativeConfigureDevice(QuirkV2Device):
+        async def async_configure(self) -> None:
+            await super().async_configure()
+            await _apply_configure_actions(self, static_actions)
+
+    return DeclarativeConfigureDevice
+
+
+async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, ...]) -> None:
+    """Execute only the static configure operations represented in the IR."""
+    zigpy_device = getattr(device, "_zigpy_device", None)
+    endpoints = getattr(zigpy_device, "endpoints", {})
+    for action in actions:
+        endpoint_id = action.endpoint if isinstance(action.endpoint, int) else 1
+        endpoint = endpoints.get(endpoint_id)
+        if endpoint is None:
+            _LOGGER.warning("Configure endpoint %s is not present", endpoint_id)
+            continue
+        cluster = _find_configure_cluster(endpoint, action.cluster)
+        if cluster is None:
+            _LOGGER.warning("Configure cluster %r is not present on endpoint %s", action.cluster, endpoint_id)
+            continue
+        try:
+            if action.operation == "bind":
+                await cluster.bind()
+            elif action.operation == "read":
+                await cluster.read_attributes(list(action.attributes))
+            elif action.operation == "configure_reporting":
+                if len(action.attributes) != 1:
+                    _LOGGER.warning("Configure reporting requires one attribute: %s", action)
+                    continue
+                await cluster.configure_reporting(
+                    action.attributes[0],
+                    int(action.minimum_interval or 0),
+                    int(action.maximum_interval or 0),
+                    int(action.reportable_change or 0),
+                )
+            else:
+                _LOGGER.warning("Unsupported configure operation %r", action.operation)
+        except Exception:  # pragma: no cover - transport errors depend on zigpy
+            _LOGGER.warning("Configure action failed: %s", action, exc_info=True)
+
+
+def _find_configure_cluster(endpoint: Any, cluster: str | int | None) -> Any | None:
+    cluster_id = _cluster_id(cluster)
+    candidates = [
+        *getattr(endpoint, "in_clusters", {}).values(),
+        *getattr(endpoint, "out_clusters", {}).values(),
+    ]
+    if cluster_id is not None:
+        for candidate in candidates:
+            if int(getattr(candidate, "cluster_id", -1)) == cluster_id:
+                return candidate
+    if isinstance(cluster, str):
+        wanted = cluster.casefold()
+        for candidate in candidates:
+            names = {
+                str(getattr(candidate, "name", "")).casefold(),
+                str(getattr(candidate, "ep_attribute", "")).casefold(),
+                type(candidate).__name__.casefold(),
+            }
+            if wanted in names:
+                return candidate
     return None
 
 
