@@ -40,6 +40,8 @@ class CoverageReport:
     fully_supported: int
     metadata_only: int
     partially_supported: int
+    usable_partial: int
+    unusable_partial: int
     rejected: int
     diagnostics: dict[str, int] = field(default_factory=dict)
     partial_reasons: dict[str, int] = field(default_factory=dict)
@@ -63,6 +65,8 @@ def build_report(result: ParseResult, problem_limit: int = 50) -> CoverageReport
     problem_devices: list[dict[str, Any]] = []
     fully_supported = 0
     partially_supported = 0
+    usable_partial = 0
+    unusable_partial = 0
     metadata_only = 0
 
     for device in result.devices:
@@ -93,6 +97,18 @@ def build_report(result: ParseResult, problem_limit: int = 50) -> CoverageReport
                 unknown_converter = True
                 unsupported_converters[converter] += 1
                 device_problems.append(f"unsupported converter: {converter}")
+        if device.partial:
+            supported_binding = any(
+                binding.cluster is not None
+                or binding.converter.rsplit(".", 1)[-1] in CONVERTER_MAP
+                for binding in [*device.from_zigbee, *device.to_zigbee]
+            )
+            if supported_binding:
+                usable_partial += 1
+            else:
+                unusable_partial += 1
+                partial_reasons["no usable data path"] += 1
+                device_problems.append("no usable data path")
         if unknown_converter and device.partial:
             partial_reasons["unsupported converter binding"] += 1
         if device.partial:
@@ -125,6 +141,8 @@ def build_report(result: ParseResult, problem_limit: int = 50) -> CoverageReport
         fully_supported=fully_supported,
         metadata_only=metadata_only,
         partially_supported=partially_supported,
+        usable_partial=usable_partial,
+        unusable_partial=unusable_partial,
         rejected=result.rejected_definitions,
         diagnostics=dict(diagnostics.most_common()),
         partial_reasons=dict(partial_reasons.most_common()),
@@ -146,6 +164,8 @@ def format_report(report: CoverageReport) -> str:
         f"Fully supported:       {report.fully_supported}",
         f"Metadata only:         {report.metadata_only}",
         f"Partially supported:   {report.partially_supported}",
+        f"Usable partial:        {report.usable_partial}",
+        f"Unusable partial:      {report.unusable_partial}",
         f"Rejected:              {report.rejected}",
     ]
     _append_section(lines, "Problems by category", report.diagnostics)

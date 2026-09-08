@@ -37,11 +37,16 @@ python3 scripts/coverage.py --json > coverage.json
 ```
 
 The report shows source files, total definitions, discovered definitions,
-fully supported definitions, partial definitions, rejected definitions, and
-aggregated unsupported converters or other problems. Use `--problem-limit` to
-control how many device-level problem entries are printed. Unsupported
-executable fields such as `configure` are retained as partial definitions when
-their static metadata can still be recovered; they are never executed.
+fully supported definitions, partial definitions, and rejected definitions.
+Partial definitions are split into `Usable partial` and `Unusable partial`:
+the latter have no reliable supported data path after static extraction. For
+example, a device whose readings depend entirely on an unsupported custom
+datapoint converter is not counted as usable merely because some metadata or
+exposes were recovered. `Rejected` is reserved for definitions that could not
+be recovered by the parser at all. Use `--problem-limit` to control how many
+device-level problem entries are printed. Unsupported executable fields such
+as `configure` are retained as partial definitions when their static metadata
+can still be recovered; they are never executed.
 
 ## Runtime binding plan
 

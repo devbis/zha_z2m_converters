@@ -16,6 +16,8 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(report.total_definitions, 3)
         self.assertEqual(report.definitions, 3)
         self.assertEqual(report.partially_supported, 1)
+        self.assertEqual(report.usable_partial, 0)
+        self.assertEqual(report.unusable_partial, 1)
         self.assertEqual(report.rejected, 0)
         self.assertIn("partial-definition", report.diagnostics)
 
@@ -23,7 +25,28 @@ class CoverageTests(unittest.TestCase):
         report = build_report(parse_path(Path(__file__).parent / "fixtures"))
         text = format_report(report)
         self.assertIn("Fully supported:", text)
+        self.assertIn("Unusable partial:", text)
         json.dumps(report.to_dict())
+
+    def test_definition_without_supported_data_path_is_unusable_partial(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: [\"TS0601\"],
+            model: \"PJ-1203A\",
+            vendor: \"Tuya\",
+            extend: [tuya.modernExtend.tuyaBase(), m.deviceAddCustomCluster(\"manuSpecificPJ1203A\", {})],
+            fromZigbee: [fzLocal.PJ1203A_strict_fz_datapoints],
+            toZigbee: [tuya.tz.datapoints],
+            exposes: [e.voltage()],
+        }];
+        """
+        from zha_zhc.parser import parse_source
+
+        report = build_report(parse_source(source, "pj1203a.ts"))
+        self.assertEqual(report.usable_partial, 0)
+        self.assertEqual(report.unusable_partial, 1)
+        self.assertIn("no usable data path", report.partial_reasons)
+        self.assertIn("no usable data path", format_report(report))
 
     def test_unsupported_macros_are_comma_separated(self) -> None:
         fixture = Path(__file__).parent / "fixtures" / "modern_extend.ts"
