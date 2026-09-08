@@ -37,6 +37,7 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "closuresDoorLock": 0x0101,
     "door_lock": 0x0101,
     "manuSpecificTuya3": 0xE001,
+    "manuSpecificTuya": 0xEF00,
 }
 
 ZHA_ATTRIBUTE_NAMES: dict[str, str] = {
@@ -54,6 +55,7 @@ class RuntimeEntity:
     property: str
     cluster: str | int | None
     attribute: str | int | None
+    dp: int | None = None
     endpoint: str | int | None = None
     access: tuple[str, ...] = ()
 
@@ -63,6 +65,7 @@ class RuntimeReport:
     cluster: str | int
     attribute: str | int
     value: Any
+    dp: int | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +111,7 @@ def build_runtime_plan(device: DeviceDefinition) -> RuntimePlan:
                 property=expose.property or expose.name,
                 cluster=binding.cluster if binding else None,
                 attribute=binding.attribute if binding else None,
+                dp=binding.dp if binding else None,
                 endpoint=expose.endpoint,
                 access=expose.access,
             )
@@ -124,12 +128,18 @@ def apply_report(plan: RuntimePlan, report: RuntimeReport) -> dict[str, Any]:
     """Convert one Zigbee attribute report into ZHA entity state."""
     result: dict[str, Any] = {}
     for entity in plan.entities:
-        if not _same_cluster(entity.cluster, report.cluster) or not _same_attribute(entity.attribute, report.attribute):
+        if (
+            not _same_cluster(entity.cluster, report.cluster)
+            or not _same_attribute(entity.attribute, report.attribute)
+            or entity.dp != report.dp
+        ):
             continue
         for binding in plan.bindings:
             if binding.direction not in {"report", "event"}:
                 continue
             if _same_cluster(binding.cluster, entity.cluster) and _same_attribute(binding.attribute, entity.attribute):
+                if binding.dp != report.dp:
+                    continue
                 result[entity.property] = _apply_expression(report.value, binding)
                 break
     return result
@@ -166,6 +176,8 @@ def make_write(plan: RuntimePlan, property_name: str, value: Any) -> RuntimeWrit
                 command=_on_off_command(value),
                 payload={},
             )
+    if binding.converter.startswith("tuya_dp."):
+        return _make_tuya_dp_write(entity, binding, value)
     return RuntimeWrite(entity.cluster, entity.attribute, _apply_write_expression(value, binding), entity.endpoint)
 
 
@@ -190,6 +202,7 @@ def _write_binding(plan: RuntimePlan, entity: RuntimeEntity, property_name: str)
             for item in plan.bindings
             if _same_cluster(item.cluster, entity.cluster)
             and _same_attribute(item.attribute, entity.attribute)
+            and item.dp == entity.dp
             and item.direction in {"command", "report", "event"}
         ),
         None,
@@ -205,6 +218,18 @@ def _on_off_command(value: Any) -> str:
 
 
 def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | None:
+    datapoint_binding = next(
+        (
+            item
+            for item in bindings
+            if item.converter.startswith("tuya_dp.")
+            and item.converter.rsplit(".", 1)[-1] == expose.name
+            and item.direction == "report"
+        ),
+        None,
+    )
+    if datapoint_binding is not None:
+        return datapoint_binding
     semantic = {
         "temperature": "temperature",
         "humidity": "humidity",
@@ -243,6 +268,10 @@ def _apply_expression(value: Any, binding: Binding) -> Any:
         divisor = binding.expression.args[0]
         if isinstance(value, (int, float)) and isinstance(divisor, (int, float)) and divisor != 0:
             return value / divisor
+    if binding.expression.op == "map_range" and len(binding.expression.args) == 4:
+        raw_min, raw_max, exposed_min, exposed_max = binding.expression.args
+        if isinstance(value, (int, float)) and raw_max != raw_min:
+            return exposed_min + (value - raw_min) * (exposed_max - exposed_min) / (raw_max - raw_min)
     if binding.expression.op == "lookup" and binding.expression.args:
         lookup = binding.expression.args[0]
         if isinstance(lookup, dict):
@@ -256,11 +285,73 @@ def _apply_write_expression(value: Any, binding: Binding) -> Any:
     if binding.expression.op == "lookup" and isinstance(binding.expression.args[0], dict):
         for raw_value, exposed_value in binding.expression.args[0].items():
             if exposed_value == value:
-                try:
-                    return int(raw_value)
-                except (TypeError, ValueError):
-                    return raw_value
+                return _coerce_tuya_dp_value(raw_value, binding.data_type)
+    if binding.expression.op == "divide" and binding.expression.args:
+        divisor = binding.expression.args[0]
+        if isinstance(value, (int, float)) and isinstance(divisor, (int, float)):
+            return value * divisor
+    if binding.expression.op == "map_range" and len(binding.expression.args) == 4:
+        raw_min, raw_max, exposed_min, exposed_max = binding.expression.args
+        if isinstance(value, (int, float)) and exposed_max != exposed_min:
+            return raw_min + (value - exposed_min) * (raw_max - raw_min) / (exposed_max - exposed_min)
     return value
+
+
+def _coerce_tuya_dp_value(value: Any, data_type: str | None) -> Any:
+    if data_type == "bool" and isinstance(value, str) and value in {"True", "False"}:
+        return value == "True"
+    if data_type in {None, "number", "enum", "bitmap"}:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def _make_tuya_dp_write(entity: RuntimeEntity, binding: Binding, value: Any) -> RuntimeWrite:
+    if binding.dp is None:
+        raise ValueError("Tuya datapoint binding has no datapoint id")
+    raw_value = _apply_write_expression(value, binding)
+    data_type = _tuya_dp_type(binding)
+    payload_value = _encode_tuya_dp_value(raw_value, data_type)
+    return RuntimeWrite(
+        entity.cluster,
+        entity.attribute,
+        raw_value,
+        entity.endpoint,
+        operation="command",
+        command="dataRequest",
+        payload={"seq": 1, "dpValues": [{"dp": binding.dp, "datatype": data_type, "data": payload_value}]},
+    )
+
+
+def _tuya_dp_type(binding: Binding) -> int:
+    return {"raw": 0, "bool": 1, "number": 2, "string": 3, "enum": 4, "bitmap": 5}.get(binding.data_type or "number", 2)
+
+
+def _encode_tuya_dp_value(value: Any, data_type: int) -> list[int]:
+    if data_type == 1:
+        if not isinstance(value, bool):
+            raise ValueError("Tuya boolean datapoints require a boolean value")
+        return [1 if value else 0]
+    if data_type == 2:
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or int(value) != value:
+            raise ValueError("Tuya numeric datapoints require an integer-valued number")
+        return list(int(value).to_bytes(4, byteorder="big", signed=True))
+    if data_type == 4:
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 0xFF:
+            raise ValueError("Tuya enum datapoints require a byte value")
+        return [value]
+    if data_type == 3:
+        if not isinstance(value, str):
+            raise ValueError("Tuya string datapoints require a string value")
+        return list(value.encode())
+    if data_type in {0, 5}:
+        if isinstance(value, bytes):
+            return list(value)
+        if isinstance(value, list) and all(isinstance(item, int) and 0 <= item <= 0xFF for item in value):
+            return value
+    raise ValueError(f"unsupported Tuya datapoint value for type {data_type}")
 
 
 def register_result(result: ParseResult) -> RuntimeRegistry:
@@ -305,7 +396,7 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
     method_name = {
         "binary": "binary_sensor",
         "button": "button",
-        "enum": "select",
+        "enum": "enum",
         "numeric": "number" if "set" in expose.access else "sensor",
         "battery": "sensor",
         "contact": "binary_sensor",
@@ -322,9 +413,21 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
     method = getattr(builder, method_name, None)
     if not callable(method):
         return
+    if method_name == "enum":
+        # QuirkBuilder's enum API requires a Python Enum class. The portable
+        # IR keeps enum values, but generating a class from arbitrary source
+        # metadata is not safe or useful for this initial adapter.
+        return
     kwargs = {"fallback_name": expose.name}
+    # Recent QuirkBuilder releases require either a device class or a
+    # translation key for entity metadata. A static expose name is safe here.
+    kwargs["translation_key"] = expose.name
     if entity.attribute is not None:
-        kwargs["attribute_name"] = ZHA_ATTRIBUTE_NAMES.get(str(entity.attribute), entity.attribute)
+        kwargs["attribute_name"] = (
+            f"dp_{entity.dp}"
+            if entity.dp is not None
+            else ZHA_ATTRIBUTE_NAMES.get(str(entity.attribute), entity.attribute)
+        )
     if expose.device_class:
         kwargs["device_class"] = expose.device_class
     if expose.value_min is not None:
@@ -342,9 +445,15 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
     try:
         method(**kwargs)
     except TypeError:
-        # Builder signatures differ slightly between ZHA releases. The
-        # portable IR remains available even when optional metadata is new.
-        method(fallback_name=expose.name)
+        # Current QuirkBuilder versions take attribute and cluster as the
+        # first two positional arguments; older adapters accept keyword-only
+        # metadata. Keep both forms compatible.
+        attribute_name = kwargs.pop("attribute_name", expose.property or expose.name)
+        cluster_id = kwargs.pop("cluster_id", None)
+        if cluster_id is None:
+            method(fallback_name=expose.name)
+        else:
+            method(attribute_name, cluster_id, **kwargs)
 
 
 def _is_command_backed(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
@@ -357,7 +466,10 @@ def _is_command_backed(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
 
 
 def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
-    return _is_command_backed(plan, entity) or (
+    return _is_command_backed(plan, entity) or any(
+        binding.converter.startswith("tuya_dp.") and _same_cluster(binding.cluster, entity.cluster)
+        for binding in plan.bindings
+    ) or (
         entity.cluster in {"genOnOff", "manuSpecificTuya3"}
         and entity.attribute in {"moesStartUpOnOff", "switchType"}
     )
@@ -369,7 +481,9 @@ def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
     for entity in plan.entities:
         if not _requires_custom_cluster(plan, entity):
             continue
-        if entity.cluster == "genOnOff" or _is_command_backed(plan, entity):
+        if any(binding.converter.startswith("tuya_dp.") and _same_cluster(binding.cluster, entity.cluster) for binding in plan.bindings):
+            required.setdefault("datapoint", set()).add(entity.endpoint or 1)
+        elif entity.cluster == "genOnOff" or _is_command_backed(plan, entity):
             required.setdefault(_tuya_on_off_cluster, set()).add(entity.endpoint or 1)
         elif entity.cluster == "manuSpecificTuya3":
             required.setdefault(_tuya3_cluster, set()).add(entity.endpoint or 1)
@@ -380,7 +494,7 @@ def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
         return False
     for cluster_factory, endpoints in required.items():
         try:
-            cluster = cluster_factory()
+            cluster = _tuya_datapoint_cluster(plan) if cluster_factory == "datapoint" else cluster_factory()
         except ImportError:
             return False
         for endpoint in endpoints:
@@ -438,6 +552,120 @@ def _tuya_on_off_cluster() -> Any:
             return [statuses]
 
     return TuyaOnOffCluster
+
+
+def _tuya_datapoint_cluster(plan: RuntimePlan) -> Any:
+    """Build a Python-only Tuya MCU cluster from declarative DP bindings."""
+    import zigpy.types as t  # type: ignore
+    from zigpy.zcl import foundation  # type: ignore
+    from zigpy.zcl.foundation import ZCLAttributeDef  # type: ignore
+    from zhaquirks.tuya.mcu import DPToAttributeMapping, TuyaMCUCluster  # type: ignore
+
+    report_bindings = {
+        binding.dp: binding
+        for binding in plan.bindings
+        if binding.converter.startswith("tuya_dp.") and binding.dp is not None and binding.direction == "report"
+    }
+    entity_types = {
+        entity.dp: entity.type
+        for entity in plan.entities
+        if entity.dp is not None
+    }
+    dp_to_attribute: dict[int, Any] = {}
+    handlers: dict[int, str] = {}
+
+    def zha_type(data_type: str | None, entity_type: str | None) -> Any:
+        if entity_type in {"binary", "switch", "contact", "occupancy"}:
+            return t.Bool
+        if entity_type in {"enum", "button"}:
+            return t.CharacterString
+        return {
+            "raw": t.LVBytes,
+            "bool": t.Bool,
+            "number": t.Single,
+            "string": t.CharacterString,
+            # Lookup exposes are represented by their public string values.
+            "enum": t.CharacterString,
+            "bitmap": t.bitmap8,
+        }.get(data_type or "number", t.int32s)
+
+    def report_converter(binding: Binding, entity_type: str | None):
+        def convert(value: Any) -> Any:
+            converted = _apply_expression(value, binding)
+            if entity_type in {"binary", "switch", "contact", "occupancy"}:
+                if isinstance(converted, str):
+                    return converted.lower() in {"1", "true", "on", "yes"}
+                return bool(converted)
+            if entity_type in {"enum", "button"}:
+                return str(converted)
+            if binding.data_type == "number" and isinstance(converted, (int, float)):
+                return float(converted)
+            if binding.data_type == "enum":
+                return str(converted)
+            return converted
+
+        return convert
+
+    def write_converter(binding: Binding):
+        def convert(value: Any) -> Any:
+            converted = _apply_write_expression(value, binding)
+            if binding.data_type == "bool" and isinstance(converted, str):
+                converted = converted.lower() in {"1", "true", "on", "yes"}
+            if binding.data_type == "number" and isinstance(converted, float) and converted.is_integer():
+                return int(converted)
+            if binding.data_type == "enum":
+                return t.enum8(converted)
+            if binding.data_type == "bitmap":
+                return t.bitmap8(converted)
+            return converted
+
+        return convert
+
+    attribute_defs: dict[str, Any] = {}
+    for dp, binding in report_bindings.items():
+        attribute_name = f"dp_{dp}"
+        entity_type = entity_types.get(dp)
+        try:
+            access: Any = foundation.ZCLAttributeAccess.Read | foundation.ZCLAttributeAccess.Write
+        except AttributeError:
+            access = "rw"
+        attribute_defs[attribute_name] = ZCLAttributeDef(
+            id=0xF000 + dp,
+            type=zha_type(binding.data_type, entity_type),
+            access=access,
+            is_manufacturer_specific=True,
+        )
+        command_binding = next(
+            (
+                item
+                for item in plan.bindings
+                if item.converter == binding.converter and item.dp == dp and item.direction == "command"
+            ),
+            None,
+        )
+        dp_to_attribute[dp] = DPToAttributeMapping(
+            TuyaMCUCluster.ep_attribute,
+            attribute_name,
+            converter=report_converter(binding, entity_type),
+            dp_converter=write_converter(command_binding or binding),
+            endpoint_id=binding.endpoint if isinstance(binding.endpoint, int) else None,
+        )
+        handlers[dp] = "_dp_2_attr_update"
+
+    declarative_attribute_defs = type(
+        "AttributeDefs",
+        (TuyaMCUCluster.AttributeDefs,),
+        attribute_defs,
+    )
+    cluster_dp_to_attribute = dp_to_attribute
+    cluster_handlers = handlers
+
+    class DeclarativeTuyaDPCluster(TuyaMCUCluster):
+        AttributeDefs = declarative_attribute_defs
+        dp_to_attribute = cluster_dp_to_attribute
+        data_point_handlers = cluster_handlers
+
+    return DeclarativeTuyaDPCluster
 
 
 def _tuya3_cluster() -> Any:

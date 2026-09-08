@@ -53,6 +53,8 @@ class Binding:
     converter: str
     cluster: str | int | None = None
     attribute: str | int | None = None
+    dp: int | None = None
+    data_type: str | None = None
     command: str | None = None
     direction: str = "report"
     endpoint: str | int | None = None

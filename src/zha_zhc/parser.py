@@ -539,6 +539,119 @@ def _call_args(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _tuya_dp_type(value: Any) -> str | None:
+    type_name = _static_text(value)
+    if type_name in {"raw", "bool", "number", "string", "enum", "bitmap"}:
+        return type_name
+    return None
+
+
+def _tuya_dp_lookup(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or not value:
+        return None
+    result: dict[str, Any] = {}
+    for exposed, raw in value.items():
+        if not isinstance(exposed, str) or not isinstance(raw, (str, int, float, bool)):
+            return None
+        result[str(raw)] = exposed
+    return result
+
+
+def _tuya_dp_expose(kind: str, args: dict[str, Any]) -> tuple[Expose | None, str | None]:
+    custom = _expose(args.get("expose")) if "expose" in args else None
+    name = _static_text(args.get("name"))
+    if custom is not None:
+        return custom, custom.name
+    if not name:
+        return None, None
+    read_only = args.get("readOnly") is True
+    access = ("state",) if read_only else ("state", "set")
+    description = _static_text(args.get("description"))
+    endpoint = _static_value(args.get("endpoint"))
+    if kind == "dpEnumLookup":
+        lookup = args.get("lookup")
+        values = tuple(str(item) for item in lookup if isinstance(item, str)) if isinstance(lookup, dict) else ()
+        return Expose("enum", name, name, access, endpoint=endpoint, values=values, description=description), name
+    if kind == "dpBinary":
+        return Expose("binary", name, name, access, endpoint=endpoint, description=description), name
+    return (
+        Expose(
+            "numeric",
+            name,
+            name,
+            access,
+            endpoint=endpoint,
+            unit=_static_text(args.get("unit")),
+            value_min=args.get("valueMin") if isinstance(args.get("valueMin"), (int, float)) else None,
+            value_max=args.get("valueMax") if isinstance(args.get("valueMax"), (int, float)) else None,
+            value_step=args.get("valueStep") if isinstance(args.get("valueStep"), (int, float)) else None,
+            description=description,
+        ),
+        name,
+    )
+
+
+def _tuya_dp_extend(kind: str, args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    dp = args.get("dp")
+    type_name = _tuya_dp_type(args.get("type"))
+    expose, name = _tuya_dp_expose(kind, args)
+    unsupported = False
+    if not isinstance(dp, int) or isinstance(dp, bool) or not 0 <= dp <= 0xFF or expose is None or name is None:
+        unsupported = True
+    if type_name is None:
+        unsupported = True
+    if args.get("skip") not in (None, False):
+        unsupported = True
+    expression: Expression | None = None
+    if kind == "dpEnumLookup":
+        lookup = _tuya_dp_lookup(args.get("lookup"))
+        if lookup is None:
+            unsupported = True
+        else:
+            expression = Expression("lookup", (lookup,))
+    elif kind == "dpBinary":
+        value_on = args.get("valueOn")
+        value_off = args.get("valueOff")
+        if not isinstance(value_on, list) or len(value_on) != 2 or not isinstance(value_off, list) or len(value_off) != 2:
+            unsupported = True
+        elif not isinstance(value_on[0], (str, int, float, bool)) or not isinstance(value_off[0], (str, int, float, bool)):
+            unsupported = True
+        else:
+            expression = Expression("lookup", ({str(value_on[1]): value_on[0], str(value_off[1]): value_off[0]},))
+    else:
+        scale = args.get("scale")
+        if isinstance(scale, (int, float)) and not isinstance(scale, bool) and scale != 0:
+            expression = Expression("divide", (scale,))
+        elif (
+            isinstance(scale, list)
+            and len(scale) == 4
+            and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in scale)
+            and scale[0] != scale[1]
+            and scale[2] != scale[3]
+        ):
+            expression = Expression("map_range", tuple(scale))
+        elif scale is not None and not isinstance(scale, (int, float)):
+            unsupported = True
+        elif isinstance(scale, list):
+            unsupported = True
+    if type_name is None or not isinstance(dp, int) or expose is None or name is None:
+        return ([expose] if expose is not None else []), [], kind, False
+    converter = f"tuya_dp.{name}"
+    binding_kwargs = {
+        "converter": converter,
+        "cluster": "manuSpecificTuya",
+        "attribute": "dpValues",
+        "dp": dp,
+        "data_type": type_name,
+        "endpoint": expose.endpoint,
+        "expression": expression,
+    }
+    bindings = [Binding(direction="report", **binding_kwargs)]
+    if "set" in expose.access:
+        bindings.append(Binding(direction="command", **binding_kwargs))
+    return [expose], bindings, kind, not unsupported
+
+
 def _fingerprints(value: Any) -> list[dict[str, str]]:
     """Expand static fingerprint helpers without importing converter code."""
     if not isinstance(value, list):
@@ -580,9 +693,78 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
     if name in _SUPPORTED_METADATA_MACROS:
         return [], [], name, True
     if name == "tuyaBase":
-        # The argument-free base is safe for the standard Tuya device setup.
-        # DP converters, time sync, and polling require executable handlers.
-        return [], [], name, not args
+        unsupported = set(args) - {"dp"}
+        if args.get("dp") is True:
+            return [], [Binding("tuya_datapoints", "manuSpecificTuya", "dpValues", direction="event")], name, not unsupported
+        return [], [], name, not unsupported
+    if name in {"dpEnumLookup", "dpBinary", "dpNumeric"}:
+        return _tuya_dp_extend(name, args)
+    if name == "dpOnOff":
+        exposes, bindings, macro, supported = _tuya_dp_extend(
+            "dpBinary",
+            {"name": "state", "type": {"__identifier__": "tuya.dataTypes.bool"}, "valueOn": ["ON", True], "valueOff": ["OFF", False], **args},
+        )
+        if exposes:
+            exposes[0] = replace(exposes[0], type="switch")
+        return exposes, bindings, macro, supported
+    if name in {
+        "dpTemperature",
+        "dpHumidity",
+        "dpBattery",
+        "dpBatteryState",
+        "dpTemperatureUnit",
+        "dpContact",
+        "dpAction",
+        "dpIlluminance",
+        "dpGas",
+        "dpPowerOnBehavior",
+    }:
+        wrapper = name
+        defaults: dict[str, Any]
+        kind: str
+        expose_type: str | None = None
+        if wrapper == "dpTemperature":
+            defaults, kind, expose_type = {"name": "temperature", "type": {"__identifier__": "tuya.dataTypes.number"}, "readOnly": True, "scale": 10, "unit": "°C"}, "dpNumeric", "temperature"
+        elif wrapper == "dpHumidity":
+            defaults, kind, expose_type = {"name": "humidity", "type": {"__identifier__": "tuya.dataTypes.number"}, "readOnly": True, "unit": "%"}, "dpNumeric", "humidity"
+        elif wrapper == "dpBattery":
+            defaults, kind, expose_type = {"name": "battery", "type": {"__identifier__": "tuya.dataTypes.number"}, "readOnly": True, "unit": "%"}, "dpNumeric", "battery"
+        elif wrapper == "dpBatteryState":
+            defaults, kind, expose_type = {"name": "battery_state", "type": {"__identifier__": "tuya.dataTypes.number"}, "readOnly": True, "lookup": {"low": 0, "medium": 1, "high": 2}}, "dpEnumLookup", "enum"
+        elif wrapper == "dpTemperatureUnit":
+            defaults, kind, expose_type = {"name": "temperature_unit", "type": {"__identifier__": "tuya.dataTypes.enum"}, "readOnly": True, "lookup": {"celsius": 0, "fahrenheit": 1}}, "dpEnumLookup", "enum"
+        elif wrapper == "dpContact":
+            invert = args.get("invert") is True
+            defaults, kind, expose_type = {
+                "name": "contact",
+                "type": {"__identifier__": "tuya.dataTypes.bool"},
+                "readOnly": True,
+                "valueOn": [True, True if invert else False],
+                "valueOff": [False, False if invert else True],
+            }, "dpBinary", "contact"
+        elif wrapper == "dpAction":
+            defaults, kind, expose_type = {"name": "action", "type": {"__identifier__": "tuya.dataTypes.number"}, "readOnly": True}, "dpEnumLookup", "button"
+        elif wrapper == "dpIlluminance":
+            defaults, kind, expose_type = {"name": "illuminance", "type": {"__identifier__": "tuya.dataTypes.number"}, "readOnly": True}, "dpNumeric", "illuminance"
+        elif wrapper == "dpGas":
+            invert = args.get("invert") is True
+            defaults, kind, expose_type = {
+                "name": "gas",
+                "type": {"__identifier__": "tuya.dataTypes.enum"},
+                "readOnly": True,
+                "valueOn": [True, 1 if not invert else 0],
+                "valueOff": [False, 0 if not invert else 1],
+            }, "dpBinary", "binary"
+        else:
+            defaults, kind, expose_type = {
+                "name": "power_on_behavior",
+                "type": {"__identifier__": "tuya.dataTypes.enum"},
+                "lookup": {"off": 0, "on": 1, "previous": 2},
+            }, "dpEnumLookup", "enum"
+        exposes, bindings, _, supported = _tuya_dp_extend(kind, {**defaults, **args})
+        if exposes and expose_type:
+            exposes[0] = replace(exposes[0], type=expose_type)
+        return exposes, bindings, wrapper, supported
     if name in _MODERN_EXTEND_SENSOR_MACROS:
         expose_name, cluster, attribute, unit, scale = _MODERN_EXTEND_SENSOR_MACROS[name]
         expose = Expose("numeric", expose_name, expose_name, ("state",), unit=unit)

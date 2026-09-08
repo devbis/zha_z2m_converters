@@ -24,4 +24,4 @@ zha-zhc-coverage = "zha_zhc.coverage:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-zha_zhc = ["py.typed"]
+zha_zhc = ["py.typed", "manifest.json"]

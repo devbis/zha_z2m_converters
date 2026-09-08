@@ -62,8 +62,9 @@ write = make_write(plan, "state", True)
 ```
 
 The current plan covers standard temperature, humidity, pressure, battery,
-occupancy, and on/off attribute mappings. `register_with_zha` uses the same
-plan when adapting entities to the installed ZHA `QuirkBuilder`.
+occupancy, on/off attribute mappings, and the declarative Tuya datapoint
+subset. `register_with_zha` uses the same plan when adapting entities to the
+installed ZHA `QuirkBuilder`.
 
 Static device fingerprints such as `tuya.fingerprint("TS0001", ["_TZ..."])`
 are preserved in the IR. The ZHA adapter registers one builder signature per
@@ -78,12 +79,39 @@ attribute reads, static `endpoint.configureReporting(...)` payloads, and common
 static reporting helpers such as `reporting.temperature(endpoint)`. Other
 callback statements remain marked as partial and are never executed.
 
-The safe Tuya subset currently includes the argument-free `tuyaBase()`,
-standard `tuyaOnOff()` switch bindings, static Tuya fingerprints,
-`tuya.configureMagicPacket` as a `genBasic` read plan, and the declarative
-`onOffCountdown` report/command plan. `RuntimeWrite` represents
+The safe Tuya subset currently includes `tuyaBase()` with its static `dp`
+option, `dpOnOff`, `dpBinary`, `dpNumeric`, and `dpEnumLookup`, plus the
+simple sensor/action wrappers built on them. They are supported when their
+datapoint, type, lookup, and scalar or four-number range scale are static.
+These macros become
+declarative bindings for the Tuya MCU `dpValues` attribute; reports and writes
+are represented by Python data, and the ZHA adapter creates a Python-only
+`TuyaMCUCluster` subclass for those bindings. Dynamic skips, callbacks, and
+other executable converter logic remain partial.
+
+The subset also includes standard `tuyaOnOff()` switch bindings, static Tuya
+fingerprints, `tuya.configureMagicPacket` as a `genBasic` read plan, and the
+declarative `onOffCountdown` report/command plan. `RuntimeWrite` represents
 `genOnOff.onWithTimedOff` as a command with an explicit payload. The ZHA
 adapter installs a small Python-only custom cluster so the countdown number
 entity can use the standard `number()` builder API while translating writes
 to that command. Other device-specific features that require custom converter
 behavior remain explicitly partial.
+
+## Home Assistant installation
+
+The package can run as a Home Assistant custom integration. Copy the package
+to `custom_components/zha_zhc`, copy a converter snapshot to a readable path,
+and add a YAML entry before starting Home Assistant:
+
+```yaml
+zha_zhc:
+  source: /config/zha_zhc/converters/src/devices/tuya.ts
+  manufacturer: _TZ3000_46t1rvdu
+  model: TS0001
+```
+
+The optional manufacturer and model filters are useful while validating a
+device. They prevent unrelated converter definitions from being registered.
+The integration registers definitions through the installed ZHA
+`QuirkBuilder`; it does not run TypeScript or JavaScript.

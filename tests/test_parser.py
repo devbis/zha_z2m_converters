@@ -98,6 +98,86 @@ class ParserTests(unittest.TestCase):
         self.assertIn("battery", [item.name for item in device.exposes])
         self.assertIn("lightingColorCtrl", [item.cluster for item in device.from_zigbee])
 
+    def test_tuya_datapoint_macros_are_declarative_and_runtime_safe(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "DP device",
+            vendor: "Tuya",
+            extend: [
+                tuya.modernExtend.tuyaBase({dp: true}),
+                tuya.modernExtend.dpOnOff({dp: 1}),
+                tuya.modernExtend.dpNumeric({name: "temperature", dp: 2, type: tuya.dataTypes.number, scale: 10, unit: "°C"}),
+                tuya.modernExtend.dpEnumLookup({name: "mode", dp: 3, type: tuya.dataTypes.enum, lookup: {off: 0, on: 1}}),
+            ],
+        }];
+        """
+        device = parse_source(source, "tuya_dp.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual([item.type for item in device.exposes], ["switch", "numeric", "enum"])
+
+        plan = build_runtime_plan(device)
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya", "dpValues", True, dp=1)), {"state": "ON"})
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya", "dpValues", 2150, dp=2)), {"temperature": 215})
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya", "dpValues", 1, dp=3)), {"mode": "on"})
+
+        state_write = make_write(plan, "state", "OFF")
+        self.assertEqual(state_write.command, "dataRequest")
+        self.assertEqual(state_write.payload["dpValues"], [{"dp": 1, "datatype": 1, "data": [0]}])
+        temperature_write = make_write(plan, "temperature", 21.5)
+        self.assertEqual(temperature_write.payload["dpValues"], [{"dp": 2, "datatype": 2, "data": [0, 0, 0, 215]}])
+        mode_write = make_write(plan, "mode", "on")
+        self.assertEqual(mode_write.payload["dpValues"], [{"dp": 3, "datatype": 4, "data": [1]}])
+
+        replacements = []
+        entities = []
+
+        class Builder:
+            def __init__(self, manufacturer, model):
+                pass
+
+            def replaces(self, cluster, **kwargs):
+                replacements.append((cluster, kwargs))
+
+            def switch(self, **kwargs):
+                entities.append(("switch", kwargs))
+
+            def number(self, **kwargs):
+                entities.append(("number", kwargs))
+
+            def select(self, **kwargs):
+                entities.append(("select", kwargs))
+
+            def add_to_registry(self):
+                pass
+
+        with patch("zha_zhc.runtime._tuya_datapoint_cluster", return_value=object()):
+            register_with_zha(register_result(parse_source(source)), Builder)
+        self.assertEqual(len(replacements), 1)
+        self.assertEqual([item[1]["attribute_name"] for item in entities], ["dp_1", "dp_2"])
+
+    def test_tuya_datapoint_wrappers_and_range_scale_are_static(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "DP wrappers",
+            vendor: "Tuya",
+            extend: [
+                tuya.modernExtend.tuyaBase({dp: true}),
+                tuya.modernExtend.dpTemperature({dp: 1, endpoint: 2}),
+                tuya.modernExtend.dpAction({dp: 2, lookup: {single: 0, double: 1}}),
+                tuya.modernExtend.dpNumeric({name: "brightness", dp: 3, type: tuya.dataTypes.number, scale: [0, 254, 0, 1000]}),
+            ],
+        }];
+        """
+        device = parse_source(source, "tuya_dp_wrappers.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual([item.type for item in device.exposes], ["temperature", "button", "numeric"])
+        plan = build_runtime_plan(device)
+        self.assertEqual(plan.entities[0].endpoint, 2)
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya", "dpValues", 215, dp=1)), {"temperature": 21.5})
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya", "dpValues", 1, dp=2)), {"action": "double"})
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya", "dpValues", 127, dp=3)), {"brightness": 500.0})
+        self.assertEqual(make_write(plan, "brightness", 500).payload["dpValues"], [{"dp": 3, "datatype": 2, "data": [0, 0, 0, 127]}])
+
     def test_tuya_fingerprint_and_on_off_extend_are_recovered(self) -> None:
         source = """
         export const definitions = [{
