@@ -69,6 +69,7 @@ class ParserTests(unittest.TestCase):
         source = (ROOT / "fixtures" / "simple_device.ts").read_text()
         registry = register_result(parse_source(source))
         calls = []
+        prevented_clusters = []
 
         class Builder:
             def __init__(self, vendor, model):
@@ -80,12 +81,42 @@ class ParserTests(unittest.TestCase):
             def sensor(self, **kwargs):
                 calls.append(("sensor", kwargs))
 
+            def prevent_default_entity_creation(self, **kwargs):
+                prevented_clusters.append(kwargs["cluster_id"])
+
             def add_to_registry(self):
                 calls.append(("register",))
 
         register_with_zha(registry, Builder)
         self.assertEqual(calls[0], ("init", "Example", "Test Plug"))
         self.assertEqual([item[0] for item in calls], ["init", "switch", "sensor", "register"])
+        self.assertEqual(prevented_clusters, [0x0B04, 0x0702])
+
+    def test_supported_measurement_entity_keeps_its_default_cluster(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Meter",
+            vendor: "Example",
+            exposes: [{type: "power", name: "power", property: "power", unit: "W"}],
+        }];
+        """
+        prevented_clusters = []
+
+        class Builder:
+            def __init__(self, vendor, model):
+                pass
+
+            def sensor(self, **kwargs):
+                self.sensor_kwargs = kwargs
+
+            def prevent_default_entity_creation(self, **kwargs):
+                prevented_clusters.append(kwargs["cluster_id"])
+
+            def add_to_registry(self):
+                pass
+
+        register_with_zha(register_result(parse_source(source)), Builder)
+        self.assertEqual(prevented_clusters, [0x0702])
 
     def test_modern_extend_macros_are_expanded_without_execution(self) -> None:
         source = (ROOT / "fixtures" / "modern_extend.ts").read_text()
@@ -208,6 +239,7 @@ class ParserTests(unittest.TestCase):
         calls = []
         replacements = []
         numbers = []
+        prevented_clusters = []
 
         class Builder:
             def __init__(self, manufacturer, model):
@@ -221,6 +253,9 @@ class ParserTests(unittest.TestCase):
 
             def replaces(self, cluster, **kwargs):
                 replacements.append((cluster, kwargs))
+
+            def prevent_default_entity_creation(self, **kwargs):
+                prevented_clusters.append(kwargs["cluster_id"])
 
             def number(self, **kwargs):
                 numbers.append(kwargs)
@@ -237,6 +272,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(numbers[0]["attribute_name"], "on_time")
         self.assertEqual(numbers[0]["cluster_id"], 0x0006)
         self.assertEqual(numbers[0]["max_value"], 43200)
+        self.assertEqual(prevented_clusters, [0x0B04, 0x0702])
 
         plan = build_runtime_plan(device)
         self.assertEqual(apply_report(plan, RuntimeReport("genOnOff", "onTime", 42)), {"countdown": 42})

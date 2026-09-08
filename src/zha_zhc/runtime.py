@@ -29,9 +29,11 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "illuminance_measurement": 0x0400,
     "lightingColorCtrl": 0x0300,
     "color_control": 0x0300,
-    "electricalMeasurement": 0x0702,
-    "electrical_measurement": 0x0702,
-    "metering": 0x0700,
+    "electricalMeasurement": 0x0B04,
+    "electrical_measurement": 0x0B04,
+    "haElectricalMeasurement": 0x0B04,
+    "metering": 0x0702,
+    "seMetering": 0x0702,
     "closuresWindowCovering": 0x0102,
     "window_covering": 0x0102,
     "closuresDoorLock": 0x0101,
@@ -381,6 +383,7 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
         plan = build_runtime_plan(device)
         for signature in signatures:
             builder = builder_factory(signature["manufacturerName"], signature["modelID"])
+            _prevent_unrepresented_default_entities(builder, plan)
             custom_clusters_ready = _configure_custom_clusters(builder, plan)
             for expose, entity in zip(device.exposes, plan.entities, strict=False):
                 if _requires_custom_cluster(plan, entity) and not custom_clusters_ready:
@@ -390,6 +393,40 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
             if callable(add_to_registry):
                 add_to_registry()
     return registry
+
+
+def _prevent_unrepresented_default_entities(builder: Any, plan: RuntimePlan) -> None:
+    """Prevent ZHA from creating entities for unsupported measurement clusters.
+
+    ZHA creates entities directly from standard clusters advertised by a device.
+    That is useful for regular quirks, but it can expose fake zero-valued power
+    sensors when a converter definition does not support those clusters. Keep
+    the suppression narrow and only apply it when the declarative definition
+    has no entity mapped to the cluster.
+    """
+    prevent = getattr(builder, "prevent_default_entity_creation", None)
+    if not callable(prevent):
+        return
+
+    represented_clusters = {
+        cluster_id
+        for entity in plan.entities
+        if entity.cluster is not None
+        for cluster_id in (_cluster_id(entity.cluster),)
+        if cluster_id is not None
+    }
+    for cluster_id in (0x0B04, 0x0702):
+        if cluster_id in represented_clusters:
+            continue
+        prevent(cluster_id=cluster_id)
+
+
+def _cluster_id(cluster: str | int | None) -> int | None:
+    if isinstance(cluster, int):
+        return cluster
+    if isinstance(cluster, str):
+        return ZCL_CLUSTER_IDS.get(cluster)
+    return None
 
 
 def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
