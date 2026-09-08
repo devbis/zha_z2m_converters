@@ -90,7 +90,7 @@ class ParserTests(unittest.TestCase):
         register_with_zha(registry, Builder)
         self.assertEqual(calls[0], ("init", "Example", "Test Plug"))
         self.assertEqual([item[0] for item in calls], ["init", "switch", "sensor", "register"])
-        self.assertEqual(prevented_clusters, [0x0006, 0x0B04, 0x0702])
+        self.assertEqual(prevented_clusters, [0x0B04, 0x0702])
 
     def test_supported_measurement_entity_keeps_its_default_cluster(self) -> None:
         source = """
@@ -272,7 +272,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(numbers[0]["attribute_name"], "on_time")
         self.assertEqual(numbers[0]["cluster_id"], 0x0006)
         self.assertEqual(numbers[0]["max_value"], 43200)
-        self.assertEqual(prevented_clusters, [0x0006, 0x0B04, 0x0702])
+        self.assertEqual(prevented_clusters, [0x0B04, 0x0702])
 
         plan = build_runtime_plan(device)
         self.assertEqual(apply_report(plan, RuntimeReport("genOnOff", "onTime", 42)), {"countdown": 42})

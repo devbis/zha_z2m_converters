@@ -415,8 +415,6 @@ def _prevent_unrepresented_default_entities(builder: Any, plan: RuntimePlan) -> 
         for cluster_id in (_cluster_id(entity.cluster),)
         if cluster_id is not None
     }
-    if any(entity.type == "switch" and _cluster_id(entity.cluster) == 0x0006 for entity in plan.entities):
-        prevent(cluster_id=0x0006)
     for cluster_id in (0x0B04, 0x0702):
         if cluster_id in represented_clusters:
             continue
