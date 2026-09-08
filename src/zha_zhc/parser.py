@@ -206,7 +206,7 @@ class _ObjectParser:
                 if depth == 0:
                     next_value = self.tokens[index + 1].value if index + 1 < len(self.tokens) else ""
                     return next_value in {"(", ".", "?."}
-            elif depth and value in {";", ",", ")", "]", "}"}:
+            elif depth and value in {";", ")", "]", "}"}:
                 return False
             index += 1
         return False
@@ -688,6 +688,111 @@ def _is_coordinator_endpoint(value: Any) -> bool:
     return _identifier(value) in {"coordinatorEndpoint", "coordinator"}
 
 
+def _configure_reporting_actions(
+    endpoint: str | int,
+    cluster: Any,
+    payload: Any,
+) -> list[ConfigureAction] | None:
+    if not isinstance(cluster, (str, int)) or not isinstance(payload, list) or not payload:
+        return None
+    actions: list[ConfigureAction] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            return None
+        attribute = _static_value(item.get("attribute"))
+        minimum = _static_value(item.get("minimumReportInterval"))
+        maximum = _static_value(item.get("maximumReportInterval"))
+        change = _static_value(item.get("reportableChange"))
+        if not isinstance(attribute, (str, int)):
+            return None
+        if not isinstance(minimum, (int, float)) or not isinstance(maximum, (int, float)):
+            return None
+        if change is not None and not isinstance(change, (int, float)):
+            return None
+        actions.append(
+            ConfigureAction(
+                "configure_reporting",
+                endpoint,
+                cluster,
+                attributes=(attribute,),
+                minimum_interval=minimum,
+                maximum_interval=maximum,
+                reportable_change=change,
+            )
+        )
+    return actions
+
+
+_REPORTING_HELPERS: dict[str, tuple[str, str, int | float, int | float, int | float | None, bool]] = {
+    "onOff": ("genOnOff", "onOff", 0, 3600, 0, False),
+    "batteryPercentageRemaining": ("genPowerCfg", "batteryPercentageRemaining", 3600, 65000, 0, True),
+    "batteryVoltage": ("genPowerCfg", "batteryVoltage", 3600, 65000, 0, True),
+    "batteryAlarmState": ("genPowerCfg", "batteryAlarmState", 3600, 65000, 0, True),
+    "brightness": ("genLevelCtrl", "currentLevel", 1, 3600, 1, False),
+    "colorTemperature": ("lightingColorCtrl", "colorTemperature", 0, 3600, 1, False),
+    "occupancy": ("msOccupancySensing", "occupancy", 0, 3600, 0, False),
+    "temperature": ("msTemperatureMeasurement", "measuredValue", 10, 3600, 100, False),
+    "humidity": ("msRelativeHumidity", "measuredValue", 10, 3600, 100, False),
+    "pressure": ("msPressureMeasurement", "measuredValue", 10, 3600, 5, False),
+    "illuminance": ("msIlluminanceMeasurement", "measuredValue", 10, 3600, 5, False),
+    "instantaneousDemand": ("seMetering", "instantaneousDemand", 5, 3600, 1, False),
+    "currentSummDelivered": ("seMetering", "currentSummDelivered", 5, 3600, 257, False),
+    "currentSummReceived": ("seMetering", "currentSummReceived", 5, 3600, 257, False),
+    "thermostatTemperature": ("hvacThermostat", "localTemp", 0, 3600, 10, False),
+    "thermostatOccupiedHeatingSetpoint": ("hvacThermostat", "occupiedHeatingSetpoint", 0, 3600, 10, False),
+    "thermostatUnoccupiedHeatingSetpoint": ("hvacThermostat", "unoccupiedHeatingSetpoint", 0, 3600, 10, False),
+    "thermostatRunningState": ("hvacThermostat", "runningState", 0, 3600, 0, False),
+    "lockState": ("closuresDoorLock", "lockState", 0, 3600, 0, False),
+    "activePower": ("haElectricalMeasurement", "activePower", 5, 3600, 1, False),
+    "reactivePower": ("haElectricalMeasurement", "reactivePower", 5, 3600, 1, False),
+    "apparentPower": ("haElectricalMeasurement", "apparentPower", 5, 3600, 1, False),
+    "rmsCurrent": ("haElectricalMeasurement", "rmsCurrent", 5, 3600, 1, False),
+    "rmsVoltage": ("haElectricalMeasurement", "rmsVoltage", 5, 3600, 1, False),
+    "powerFactor": ("haElectricalMeasurement", "powerFactor", 0, 65000, 1, False),
+    "fanMode": ("hvacFanCtrl", "fanMode", 0, 3600, 0, False),
+    "acFrequency": ("haElectricalMeasurement", "acFrequency", 5, 300, 10, False),
+    "presentValue": ("genBinaryInput", "presentValue", 10, 60, 1, False),
+}
+
+
+def _reporting_helper_actions(call: str | None, args: list[Any], locals_: dict[str, Any]) -> list[ConfigureAction] | None:
+    if not call or not call.startswith("reporting."):
+        return None
+    helper = call.rsplit(".", 1)[-1]
+    definition = _REPORTING_HELPERS.get(helper)
+    if definition is None or len(args) not in {1, 2}:
+        return None
+    endpoint = _configure_endpoint(args[0], locals_)
+    if endpoint is None:
+        return None
+    cluster, attribute, minimum, maximum, change, reads_after = definition
+    if len(args) == 2:
+        overrides = args[1]
+        if not isinstance(overrides, dict):
+            return None
+        minimum = _static_value(overrides.get("min")) if "min" in overrides else minimum
+        maximum = _static_value(overrides.get("max")) if "max" in overrides else maximum
+        change = _static_value(overrides.get("change")) if "change" in overrides else change
+    if not isinstance(minimum, (int, float)) or not isinstance(maximum, (int, float)):
+        return None
+    if change is not None and not isinstance(change, (int, float)):
+        return None
+    actions = [
+        ConfigureAction(
+            "configure_reporting",
+            endpoint,
+            cluster,
+            attributes=(attribute,),
+            minimum_interval=minimum,
+            maximum_interval=maximum,
+            reportable_change=change,
+        )
+    ]
+    if reads_after:
+        actions.append(ConfigureAction("read", endpoint, cluster, attributes=(attribute,)))
+    return actions
+
+
 def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
     """Extract a small whitelist of bind and read operations from a callback."""
     if value is None or value == []:
@@ -738,7 +843,7 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             continue
         call = _call_name(statement)
         args = statement.get("args", [])
-        if call and not call.startswith("reporting.") and call.rsplit(".", 1)[-1] in {"bind", "read"}:
+        if call and not call.startswith("reporting.") and call.rsplit(".", 1)[-1] in {"bind", "read", "configureReporting"}:
             method_name = call.rsplit(".", 1)[-1]
             receiver = {"__identifier__": call.rsplit(".", 1)[0]}
             endpoint = _configure_endpoint(receiver, locals_)
@@ -762,6 +867,13 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                 attributes = tuple(_static_value(item) for item in args[1])
                 if isinstance(cluster, (str, int)) and all(isinstance(item, (str, int)) for item in attributes):
                     actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes))
+                else:
+                    unsupported = True
+                continue
+            if method_name == "configureReporting" and len(args) == 2:
+                reporting_actions = _configure_reporting_actions(endpoint, _static_value(args[0]), args[1])
+                if reporting_actions is not None:
+                    actions.extend(reporting_actions)
                 else:
                     unsupported = True
                 continue
@@ -791,6 +903,10 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                 if read_frequency:
                     attributes += ("acFrequencyDivisor", "acFrequencyMultiplier")
                 actions.append(ConfigureAction("read", endpoint, "haElectricalMeasurement", attributes=attributes))
+            continue
+        helper_actions = _reporting_helper_actions(call, args, locals_)
+        if helper_actions is not None:
+            actions.extend(helper_actions)
             continue
         if call == "reporting.bind":
             clusters = args[2] if len(args) == 3 else None

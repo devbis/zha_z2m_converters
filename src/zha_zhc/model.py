@@ -68,6 +68,9 @@ class ConfigureAction:
     endpoint: str | int | None = None
     cluster: str | int | None = None
     attributes: tuple[str | int, ...] = ()
+    minimum_interval: int | float | None = None
+    maximum_interval: int | float | None = None
+    reportable_change: Any = None
     target: str = "coordinator"
 
 

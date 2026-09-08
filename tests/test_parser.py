@@ -212,6 +212,31 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_static_configure_reporting_is_extracted(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["REPORTING"],
+            model: "Reporting",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await endpoint.configureReporting("genOnOff", [
+                    {attribute: "onOff", minimumReportInterval: 0, maximumReportInterval: 3600, reportableChange: 0},
+                ]);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-reporting-static.ts").devices[0]
+        self.assertFalse(device.partial)
+        action = device.configure_actions[0]
+        self.assertEqual(action.operation, "configure_reporting")
+        self.assertEqual(action.endpoint, 1)
+        self.assertEqual(action.cluster, "genOnOff")
+        self.assertEqual(action.attributes, ("onOff",))
+        self.assertEqual(action.minimum_interval, 0)
+        self.assertEqual(action.maximum_interval, 3600)
+        self.assertEqual(action.reportable_change, 0)
+
     def test_custom_electricity_converter_keeps_device_partial(self) -> None:
         source = """
         export const definitions = [{
