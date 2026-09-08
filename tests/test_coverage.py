@@ -25,6 +25,28 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("Fully supported:", text)
         json.dumps(report.to_dict())
 
+    def test_unsupported_macros_are_comma_separated(self) -> None:
+        fixture = Path(__file__).parent / "fixtures" / "modern_extend.ts"
+        report = build_report(parse_path(fixture))
+        report.unsupported_macros = {"firstMacro": 2, "secondMacro": 1}
+        text = format_report(report)
+        self.assertIn("Unsupported extend macros:", text)
+        self.assertIn(", ", text)
+
+    def test_device_problem_includes_macro_name(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: [\"MACRO-DEVICE\"],
+            model: \"Macro Device\",
+            vendor: \"Example\",
+            extend: [m.unknownMacro()],
+        }];
+        """
+        from zha_zhc.parser import parse_source
+
+        text = format_report(build_report(parse_source(source, "macro_device.ts")))
+        self.assertIn("unsupported extend macro: unknownMacro", text)
+
     def test_modern_extend_fixture_is_fully_supported(self) -> None:
         fixture = Path(__file__).parent / "fixtures" / "modern_extend.ts"
         report = build_report(parse_path(fixture))

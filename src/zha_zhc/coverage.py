@@ -96,7 +96,8 @@ def build_report(result: ParseResult, problem_limit: int = 50) -> CoverageReport
                 device_problems.append("unsupported converter binding")
             elif device.unsupported_macros and device.unsupported_macros != ["dynamic-expression"]:
                 partial_reasons["unsupported extend macro"] += 1
-                device_problems.append("unsupported extend macro")
+                macros = ", ".join(dict.fromkeys(device.unsupported_macros))
+                device_problems.append(f"unsupported extend macro: {macros}")
             else:
                 partial_reasons["dynamic expose or other expression"] += 1
                 device_problems.append("dynamic expose or other expression")
@@ -139,7 +140,9 @@ def format_report(report: CoverageReport) -> str:
     ]
     _append_section(lines, "Problems by category", report.diagnostics)
     _append_section(lines, "Partial support reasons", report.partial_reasons)
-    _append_section(lines, "Unsupported extend macros", report.unsupported_macros)
+    if report.unsupported_macros:
+        macros = ", ".join(f"{name} ({count})" for name, count in report.unsupported_macros.items())
+        lines.append(f"\nUnsupported extend macros: {macros}")
     _append_section(lines, "Unsupported expose types", report.unsupported_exposes)
     _append_section(lines, "Unsupported converters", report.unsupported_converters)
     if report.devices_with_problems:
