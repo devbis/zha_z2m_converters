@@ -36,6 +36,49 @@ class ParserTests(unittest.TestCase):
         self.assertIn("on_off", {item.cluster for item in normalized.from_zigbee})
         self.assertIn("temperature_measurement", {item.cluster for item in normalized.from_zigbee})
 
+    def test_standard_converter_aliases_are_normalized_to_zcl(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["STANDARD"],
+            model: "Standard",
+            vendor: "Example",
+            fromZigbee: [
+                fz.metering,
+                fz.electrical_measurement,
+                fz.thermostat,
+                fz.thermostat_local_temperature,
+                fz.cover_position_tilt,
+                fz.lock,
+                fz.fan,
+            ],
+            toZigbee: [
+                tz.thermostat_system_mode,
+                tz.thermostat_occupied_heating_setpoint,
+                tz.cover_state,
+                tz.power_on_behavior,
+            ],
+        }];
+        """
+        device = normalize_device(parse_source(source, "standard-converters.ts").devices[0])
+        self.assertFalse(device.partial)
+        bindings = [*device.from_zigbee, *device.to_zigbee]
+        self.assertEqual(
+            [(item.converter.rsplit(".", 1)[-1], item.cluster, item.attribute) for item in bindings],
+            [
+                ("metering", "seMetering", None),
+                ("electrical_measurement", "haElectricalMeasurement", None),
+                ("thermostat", "hvacThermostat", None),
+                ("thermostat_local_temperature", "hvacThermostat", "localTemp"),
+                ("cover_position_tilt", "closuresWindowCovering", "currentPositionTiltPercentage"),
+                ("lock", "closuresDoorLock", "lockState"),
+                ("fan", "hvacFanCtrl", "fanMode"),
+                ("thermostat_system_mode", "hvacThermostat", "systemMode"),
+                ("thermostat_occupied_heating_setpoint", "hvacThermostat", "occupiedHeatingSetpoint"),
+                ("cover_state", "closuresWindowCovering", None),
+                ("power_on_behavior", "genOnOff", "startUpOnOff"),
+            ],
+        )
+
     def test_function_calls_are_not_executed(self) -> None:
         source = (ROOT / "fixtures" / "unsafe_device.ts").read_text()
         result = parse_source(source, "unsafe_device.ts")
@@ -292,6 +335,31 @@ class ParserTests(unittest.TestCase):
         power_behavior_write = make_write(plan, "power_on_behavior", "previous")
         self.assertEqual(power_behavior_write.value, 2)
 
+    def test_tuya_on_off_static_options_are_expanded(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["TUYA-OPTIONS"],
+            model: "Tuya options",
+            vendor: "Tuya",
+            extend: [tuya.modernExtend.tuyaOnOff({powerOnBehavior2: true, electricalMeasurements: true})],
+        }];
+        """
+        device = parse_source(source, "tuya-options.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.cluster, item.attribute) for item in device.from_zigbee[-5:]],
+            [
+                ("manuSpecificTuya3", "powerOnBehavior"),
+                ("haElectricalMeasurement", "activePower"),
+                ("haElectricalMeasurement", "rmsCurrent"),
+                ("haElectricalMeasurement", "rmsVoltage"),
+                ("seMetering", "currentSummDelivered"),
+            ],
+        )
+        plan = build_runtime_plan(device)
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya3", "powerOnBehavior", 2)), {"power_on_behavior": "previous"})
+        self.assertEqual(apply_report(plan, RuntimeReport("haElectricalMeasurement", "activePower", 42)), {"power": 42})
+
     def test_vendor_light_aliases_use_safe_light_expansion(self) -> None:
         source = """
         export const definitions = [{
@@ -415,6 +483,32 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(
             [(item.endpoint, item.cluster) for item in device.configure_actions],
             [(2, "genPowerCfg"), (2, "msTemperatureMeasurement")],
+        )
+
+    def test_indexed_endpoint_and_static_configure_locals_are_recovered(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["INDEXED"],
+            model: "Indexed",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.endpoints[0];
+                const clusters = ["genOnOff", "genPowerCfg"];
+                const reporting = [{attribute: "onOff", minimumReportInterval: 0, maximumReportInterval: 3600, reportableChange: 0}];
+                await reporting.bind(endpoint, coordinatorEndpoint, clusters);
+                await endpoint.configureReporting("genOnOff", reporting);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-locals.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.operation, item.endpoint, item.cluster, item.attributes) for item in device.configure_actions],
+            [
+                ("bind", "__endpoint_index__:0", "genOnOff", ()),
+                ("bind", "__endpoint_index__:0", "genPowerCfg", ()),
+                ("configure_reporting", "__endpoint_index__:0", "genOnOff", ("onOff",)),
+            ],
         )
 
     def test_configure_reads_and_reporting_helpers_are_extracted(self) -> None:

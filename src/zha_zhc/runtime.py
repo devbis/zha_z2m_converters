@@ -18,6 +18,7 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "on_off": 0x0006,
     "genBasic": 0x0000,
     "genScenes": 0x0005,
+    "genIdentify": 0x0003,
     "genLevelCtrl": 0x0008,
     "level_control": 0x0008,
     "genPowerCfg": 0x0001,
@@ -38,9 +39,11 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "color_control": 0x0300,
     "hvacThermostat": 0x0201,
     "hvacFanCtrl": 0x0202,
+    "hvacUserInterfaceCfg": 0x0204,
     "closuresWindowCovering": 0x0102,
     "closuresDoorLock": 0x0101,
     "ssIasZone": 0x0500,
+    "ssIasWd": 0x0502,
     "electricalMeasurement": 0x0B04,
     "electrical_measurement": 0x0B04,
     "haElectricalMeasurement": 0x0B04,
@@ -254,9 +257,31 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
     }.get(expose.type) or {
         "countdown": "on_off_countdown",
     }.get(expose.name, expose.name)
-    return next((item for item in bindings if item.converter.rsplit(".", 1)[-1] == semantic), None) or next(
-        (item for item in bindings if item.attribute == expose.property), None
-    )
+    binding = next((item for item in bindings if item.converter.rsplit(".", 1)[-1] == semantic), None)
+    if binding is not None:
+        return binding
+    measurement_attributes = {
+        "power": ("haElectricalMeasurement", "activePower"),
+        "current": ("haElectricalMeasurement", "rmsCurrent"),
+        "voltage": ("haElectricalMeasurement", "rmsVoltage"),
+        "energy": ("seMetering", "currentSummDelivered"),
+    }
+    cluster_attribute = measurement_attributes.get(expose.name)
+    if cluster_attribute is not None:
+        cluster, attribute = cluster_attribute
+        binding = next(
+            (
+                item
+                for item in bindings
+                if item.direction == "report"
+                and _same_cluster(item.cluster, cluster)
+                and _same_attribute(item.attribute, attribute)
+            ),
+            None,
+        )
+        if binding is not None:
+            return binding
+    return next((item for item in bindings if item.attribute == expose.property), None)
 
 
 def _same_cluster(left: str | int | None, right: str | int | None) -> bool:
@@ -480,8 +505,7 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
     zigpy_device = getattr(device, "_zigpy_device", None)
     endpoints = getattr(zigpy_device, "endpoints", {})
     for action in actions:
-        endpoint_id = action.endpoint if isinstance(action.endpoint, int) else 1
-        endpoint = endpoints.get(endpoint_id)
+        endpoint_id, endpoint = _resolve_configure_endpoint(endpoints, action.endpoint)
         if endpoint is None:
             _LOGGER.warning("Configure endpoint %s is not present", endpoint_id)
             continue
@@ -508,6 +532,20 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
                 _LOGGER.warning("Unsupported configure operation %r", action.operation)
         except Exception:  # pragma: no cover - transport errors depend on zigpy
             _LOGGER.warning("Configure action failed: %s", action, exc_info=True)
+
+
+def _resolve_configure_endpoint(endpoints: Any, endpoint: str | int | None) -> tuple[str | int, Any | None]:
+    if isinstance(endpoint, int):
+        return endpoint, endpoints.get(endpoint)
+    if isinstance(endpoint, str) and endpoint.startswith("__endpoint_index:"):
+        try:
+            index = int(endpoint.rsplit(":", 1)[-1])
+        except ValueError:
+            return endpoint, None
+        available = [endpoints[key] for key in sorted(endpoints) if key != 0]
+        return endpoint, available[index] if 0 <= index < len(available) else None
+    endpoint_id = endpoint if endpoint is not None else 1
+    return endpoint_id, endpoints.get(endpoint_id)
 
 
 def _find_configure_cluster(endpoint: Any, cluster: str | int | None) -> Any | None:
@@ -612,7 +650,7 @@ def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
         for binding in plan.bindings
     ) or (
         entity.cluster in {"genOnOff", "manuSpecificTuya3"}
-        and entity.attribute in {"moesStartUpOnOff", "switchType"}
+        and entity.attribute in {"moesStartUpOnOff", "powerOnBehavior", "switchType"}
     )
 
 

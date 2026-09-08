@@ -108,6 +108,13 @@ class _ObjectParser:
                         raise UnsupportedSyntax("property access after call is not static")
                     methods.append({"name": method, "args": self.parse_call_args()})
                 return {"__fluent__": value, "methods": methods} if methods else value
+            if self.current().value == "[":
+                self.take("[")
+                index = self.parse_value()
+                self.take("]")
+                if not isinstance(index, (str, int)):
+                    raise UnsupportedSyntax("indexed access must use a static key")
+                return {"__indexed__": ".".join(parts), "index": index}
             if self.constants and "." not in parts and name in self.constants:
                 return self.constants[name]
             return {"__identifier__": ".".join(parts)}
@@ -775,7 +782,13 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         return [expose], [Binding("on_off", "genOnOff", "onOff", direction="report")], name, True
     if name == "tuyaOnOff":
         expose = Expose("switch", "state", "state", ("state", "set"))
-        supported_options = {"switchType", "onOffCountdown"}
+        supported_options = {
+            "switchType",
+            "onOffCountdown",
+            "powerOutageMemory",
+            "powerOnBehavior2",
+            "electricalMeasurements",
+        }
         unsupported_options = set(args) - supported_options
         bindings = [Binding("on_off", "genOnOff", "onOff", direction="report")]
         exposes = [expose]
@@ -819,9 +832,45 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("switch_type", "manuSpecificTuya3", "switchType", direction="command", expression=switch_type_expression),
                 ]
             )
-        # tuyaOnOff uses the legacy genOnOff power-on behavior unless an
-        # alternative behavior option is explicitly selected.
-        if not any(option in args for option in ("powerOnBehavior2", "powerOnBehavior3")):
+        # tuyaOnOff uses one of the two static Tuya power-on attributes unless
+        # a manufacturer-dependent or otherwise unsupported variant is used.
+        if args.get("powerOnBehavior2") is True:
+            exposes.append(
+                Expose(
+                    "enum",
+                    "power_on_behavior",
+                    "power_on_behavior",
+                    ("state", "set"),
+                    values=("off", "on", "previous"),
+                    category="config",
+                )
+            )
+            power_on_behavior_expression = Expression("lookup", ({"0": "off", "1": "on", "2": "previous"},))
+            bindings.extend(
+                [
+                    Binding("power_on_behavior", "manuSpecificTuya3", "powerOnBehavior", direction="report", expression=power_on_behavior_expression),
+                    Binding("power_on_behavior", "manuSpecificTuya3", "powerOnBehavior", direction="command", expression=power_on_behavior_expression),
+                ]
+            )
+        elif args.get("powerOutageMemory") is True:
+            exposes.append(
+                Expose(
+                    "enum",
+                    "power_outage_memory",
+                    "power_outage_memory",
+                    ("state", "set"),
+                    values=("off", "on", "restore"),
+                    category="config",
+                )
+            )
+            power_outage_expression = Expression("lookup", ({"0": "off", "1": "on", "2": "restore"},))
+            bindings.extend(
+                [
+                    Binding("power_outage_memory", "genOnOff", "moesStartUpOnOff", direction="report", expression=power_outage_expression),
+                    Binding("power_outage_memory", "genOnOff", "moesStartUpOnOff", direction="command", expression=power_outage_expression),
+                ]
+            )
+        elif "powerOnBehavior3" not in args:
             exposes.append(
                 Expose(
                     "enum",
@@ -839,7 +888,29 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("power_on_behavior", "genOnOff", "moesStartUpOnOff", direction="command", expression=power_on_behavior_expression),
                 ]
             )
+        elif args.get("powerOnBehavior3") is not True:
+            unsupported_options.add("powerOnBehavior3")
+        if args.get("electricalMeasurements") is True:
+            exposes.extend(
+                [
+                    Expose("numeric", "power", "power", ("state",), unit="W"),
+                    Expose("numeric", "current", "current", ("state",), unit="A"),
+                    Expose("numeric", "voltage", "voltage", ("state",), unit="V"),
+                    Expose("numeric", "energy", "energy", ("state",), unit="kWh"),
+                ]
+            )
+            bindings.extend(
+                [
+                    Binding(name, "haElectricalMeasurement", "activePower", direction="report"),
+                    Binding(name, "haElectricalMeasurement", "rmsCurrent", direction="report"),
+                    Binding(name, "haElectricalMeasurement", "rmsVoltage", direction="report"),
+                    Binding(name, "seMetering", "currentSummDelivered", direction="report"),
+                ]
+            )
         for option in ("switchType", "onOffCountdown"):
+            if option in args and args[option] is not True:
+                unsupported_options.add(option)
+        for option in ("powerOutageMemory", "powerOnBehavior2", "electricalMeasurements"):
             if option in args and args[option] is not True:
                 unsupported_options.add(option)
         return exposes, bindings, name, not unsupported_options
@@ -977,7 +1048,25 @@ def _configure_endpoint(value: Any, locals_: dict[str, Any]) -> str | int | None
     if isinstance(value, dict) and value.get("__call__") == "device.getEndpoint":
         args = value.get("args", [])
         return _static_value(args[0]) if args and isinstance(_static_value(args[0]), (str, int)) else None
+    if isinstance(value, dict) and value.get("__indexed__") in {"device.endpoints", "device.endpoint"}:
+        index = value.get("index")
+        if isinstance(index, int):
+            return f"__endpoint_index__:{index}"
     return None
+
+
+def _resolve_config_value(value: Any, locals_: dict[str, Any]) -> Any:
+    """Resolve static configure locals without evaluating expressions."""
+    if isinstance(value, dict) and set(value) == {"__identifier__"}:
+        name = str(value["__identifier__"])
+        if name in locals_:
+            return _resolve_config_value(locals_[name], locals_)
+        return value
+    if isinstance(value, list):
+        return [_resolve_config_value(item, locals_) for item in value]
+    if isinstance(value, dict):
+        return {key: _resolve_config_value(item, locals_) for key, item in value.items()}
+    return value
 
 
 def _is_coordinator_endpoint(value: Any) -> bool:
@@ -1022,23 +1111,44 @@ def _configure_reporting_actions(
 
 _REPORTING_HELPERS: dict[str, tuple[str, str, int | float, int | float, int | float | None, bool]] = {
     "onOff": ("genOnOff", "onOff", 0, 3600, 0, False),
+    "onTime": ("genOnOff", "onTime", 0, 3600, 40, False),
     "batteryPercentageRemaining": ("genPowerCfg", "batteryPercentageRemaining", 3600, 65000, 0, True),
     "batteryVoltage": ("genPowerCfg", "batteryVoltage", 3600, 65000, 0, True),
     "batteryAlarmState": ("genPowerCfg", "batteryAlarmState", 3600, 65000, 0, True),
     "brightness": ("genLevelCtrl", "currentLevel", 1, 3600, 1, False),
     "colorTemperature": ("lightingColorCtrl", "colorTemperature", 0, 3600, 1, False),
+    "currentPositionLiftPercentage": ("closuresWindowCovering", "currentPositionLiftPercentage", 1, 3600, 1, False),
+    "currentPositionTiltPercentage": ("closuresWindowCovering", "currentPositionTiltPercentage", 1, 3600, 1, False),
     "occupancy": ("msOccupancySensing", "occupancy", 0, 3600, 0, False),
     "temperature": ("msTemperatureMeasurement", "measuredValue", 10, 3600, 100, False),
     "humidity": ("msRelativeHumidity", "measuredValue", 10, 3600, 100, False),
     "pressure": ("msPressureMeasurement", "measuredValue", 10, 3600, 5, False),
+    "pressureExtended": ("msPressureMeasurement", "scaledValue", 10, 3600, 5, False),
     "illuminance": ("msIlluminanceMeasurement", "measuredValue", 10, 3600, 5, False),
+    "co2": ("msCO2", "measuredValue", 10, 3600, 1, False),
+    "deviceTemperature": ("genDeviceTempCfg", "currentTemperature", 300, 3600, 1, False),
+    "soil_moisture": ("msSoilMoisture", "measuredValue", 10, 3600, 100, False),
     "instantaneousDemand": ("seMetering", "instantaneousDemand", 5, 3600, 1, False),
     "currentSummDelivered": ("seMetering", "currentSummDelivered", 5, 3600, 257, False),
     "currentSummReceived": ("seMetering", "currentSummReceived", 5, 3600, 257, False),
+    "doorState": ("closuresDoorLock", "doorState", 0, 3600, 0, False),
+    "thermostatSystemMode": ("hvacThermostat", "systemMode", 10, 3600, None, False),
     "thermostatTemperature": ("hvacThermostat", "localTemp", 0, 3600, 10, False),
+    "thermostatKeypadLockMode": ("hvacUserInterfaceCfg", "keypadLockout", 10, 3600, None, False),
+    "thermostatTemperatureCalibration": ("hvacThermostat", "localTemperatureCalibration", 0, 3600, 0, False),
     "thermostatOccupiedHeatingSetpoint": ("hvacThermostat", "occupiedHeatingSetpoint", 0, 3600, 10, False),
     "thermostatUnoccupiedHeatingSetpoint": ("hvacThermostat", "unoccupiedHeatingSetpoint", 0, 3600, 10, False),
+    "thermostatOccupiedCoolingSetpoint": ("hvacThermostat", "occupiedCoolingSetpoint", 0, 3600, 10, False),
+    "thermostatUnoccupiedCoolingSetpoint": ("hvacThermostat", "unoccupiedCoolingSetpoint", 0, 3600, 10, False),
+    "thermostatPIHeatingDemand": ("hvacThermostat", "pIHeatingDemand", 0, 3600, 10, False),
+    "thermostatPICoolingDemand": ("hvacThermostat", "pICoolingDemand", 0, 3600, 10, False),
     "thermostatRunningState": ("hvacThermostat", "runningState", 0, 3600, 0, False),
+    "thermostatRunningMode": ("hvacThermostat", "runningMode", 10, 3600, None, False),
+    "thermostatOccupancy": ("hvacThermostat", "occupancy", 0, 3600, 0, False),
+    "thermostatSetpointChangeSource": ("hvacThermostat", "setpointChangeSource", 10, 3600, None, False),
+    "thermostatTemperatureSetpointHold": ("hvacThermostat", "tempSetpointHold", 0, 3600, 0, False),
+    "thermostatTemperatureSetpointHoldDuration": ("hvacThermostat", "tempSetpointHoldDuration", 0, 3600, 10, False),
+    "thermostatAcLouverPosition": ("hvacThermostat", "acLouverPosition", 0, 3600, None, False),
     "lockState": ("closuresDoorLock", "lockState", 0, 3600, 0, False),
     "activePower": ("haElectricalMeasurement", "activePower", 5, 3600, 1, False),
     "reactivePower": ("haElectricalMeasurement", "reactivePower", 5, 3600, 1, False),
@@ -1129,9 +1239,10 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                     else:
                         unsupported = True
                     continue
-                if len(args) == 2 and isinstance(args[1], list):
+                if len(args) == 2 and isinstance(_resolve_config_value(args[1], locals_), list):
                     cluster = _static_value(args[0])
-                    attributes = tuple(_static_value(item) for item in args[1])
+                    attributes_value = _resolve_config_value(args[1], locals_)
+                    attributes = tuple(_static_value(item) for item in attributes_value)
                     if isinstance(cluster, (str, int)) and all(isinstance(item, (str, int)) for item in attributes):
                         actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes, target="device"))
                     else:
@@ -1174,16 +1285,21 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                 else:
                     unsupported = True
                 continue
-            if method_name == "read" and len(args) == 2 and isinstance(args[1], list):
+            if method_name == "read" and len(args) == 2 and isinstance(_resolve_config_value(args[1], locals_), list):
                 cluster = _static_value(args[0])
-                attributes = tuple(_static_value(item) for item in args[1])
+                attributes_value = _resolve_config_value(args[1], locals_)
+                attributes = tuple(_static_value(item) for item in attributes_value)
                 if isinstance(cluster, (str, int)) and all(isinstance(item, (str, int)) for item in attributes):
                     actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes, target="device"))
                 else:
                     unsupported = True
                 continue
             if method_name == "configureReporting" and len(args) == 2:
-                reporting_actions = _configure_reporting_actions(endpoint, _static_value(args[0]), args[1])
+                reporting_actions = _configure_reporting_actions(
+                    endpoint,
+                    _static_value(args[0]),
+                    _resolve_config_value(args[1], locals_),
+                )
                 if reporting_actions is not None:
                     actions.extend(reporting_actions)
                 else:
@@ -1221,7 +1337,7 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             actions.extend(helper_actions)
             continue
         if call == "reporting.bind":
-            clusters = args[2] if len(args) == 3 else None
+            clusters = _resolve_config_value(args[2], locals_) if len(args) == 3 else None
             endpoint = _configure_endpoint(args[0], locals_) if len(args) >= 1 else None
             if endpoint is None or len(args) != 3 or not _is_coordinator_endpoint(args[1]) or not isinstance(clusters, list):
                 unsupported = True
