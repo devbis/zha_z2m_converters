@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from zha_zhc.exporter import export_python
 from zha_zhc.mapping import normalize_device
@@ -114,15 +115,19 @@ class ParserTests(unittest.TestCase):
         """
         device = parse_source(source, "whd02.ts").devices[0]
         self.assertEqual(device.fingerprints, [{"modelID": "TS0001", "manufacturerName": "_TZ3000_46t1rvdu"}])
-        self.assertTrue(device.partial)
+        self.assertFalse(device.partial)
         self.assertIn("state", [item.name for item in device.exposes])
+        self.assertIn("countdown", [item.name for item in device.exposes])
         self.assertIn("switch_type", [item.name for item in device.exposes])
+        self.assertIn("power_on_behavior", [item.name for item in device.exposes])
         self.assertEqual(device.configure_actions[0].operation, "read")
         self.assertEqual(device.configure_actions[0].target, "device")
         self.assertEqual(device.configure_actions[0].attributes[-1], 0xFFFE)
         self.assertEqual(device.configure_actions[-1].cluster, "genOnOff")
 
         calls = []
+        replacements = []
+        numbers = []
 
         class Builder:
             def __init__(self, manufacturer, model):
@@ -134,11 +139,39 @@ class ParserTests(unittest.TestCase):
             def select(self, **kwargs):
                 pass
 
+            def replaces(self, cluster, **kwargs):
+                replacements.append((cluster, kwargs))
+
+            def number(self, **kwargs):
+                numbers.append(kwargs)
+
             def add_to_registry(self):
                 pass
 
-        register_with_zha(register_result(parse_source(source)), Builder)
+        with patch("zha_zhc.runtime._tuya_on_off_cluster", return_value=object()), patch(
+            "zha_zhc.runtime._tuya3_cluster", return_value=object()
+        ):
+            register_with_zha(register_result(parse_source(source)), Builder)
         self.assertEqual(calls, [("_TZ3000_46t1rvdu", "TS0001")])
+        self.assertEqual(len(replacements), 2)
+        self.assertEqual(numbers[0]["attribute_name"], "on_time")
+        self.assertEqual(numbers[0]["cluster_id"], 0x0006)
+        self.assertEqual(numbers[0]["max_value"], 43200)
+
+        plan = build_runtime_plan(device)
+        self.assertEqual(apply_report(plan, RuntimeReport("genOnOff", "onTime", 42)), {"countdown": 42})
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya3", "switchType", 2)), {"switch_type": "momentary"})
+        self.assertEqual(apply_report(plan, RuntimeReport("genOnOff", "moesStartUpOnOff", 1)), {"power_on_behavior": "on"})
+        countdown_write = make_write(plan, "countdown", 120)
+        self.assertEqual(countdown_write.operation, "command")
+        self.assertEqual(countdown_write.command, "onWithTimedOff")
+        self.assertEqual(countdown_write.payload, {"ctrlbits": 0, "ontime": 120, "offwaittime": 120})
+        state_write = make_write(plan, "state", True)
+        self.assertEqual((state_write.operation, state_write.command, state_write.payload), ("command", "on", {}))
+        switch_type_write = make_write(plan, "switch_type", "momentary")
+        self.assertEqual(switch_type_write.value, 2)
+        power_behavior_write = make_write(plan, "power_on_behavior", "previous")
+        self.assertEqual(power_behavior_write.value, 2)
 
     def test_vendor_light_aliases_use_safe_light_expansion(self) -> None:
         source = """

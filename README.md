@@ -79,6 +79,11 @@ static reporting helpers such as `reporting.temperature(endpoint)`. Other
 callback statements remain marked as partial and are never executed.
 
 The safe Tuya subset currently includes the argument-free `tuyaBase()`,
-standard `tuyaOnOff()` switch bindings, static Tuya fingerprints, and
-`tuya.configureMagicPacket` as a `genBasic` read plan. Optional device-specific
-features that require custom converter behavior remain explicitly partial.
+standard `tuyaOnOff()` switch bindings, static Tuya fingerprints,
+`tuya.configureMagicPacket` as a `genBasic` read plan, and the declarative
+`onOffCountdown` report/command plan. `RuntimeWrite` represents
+`genOnOff.onWithTimedOff` as a command with an explicit payload. The ZHA
+adapter installs a small Python-only custom cluster so the countdown number
+entity can use the standard `number()` builder API while translating writes
+to that command. Other device-specific features that require custom converter
+behavior remain explicitly partial.

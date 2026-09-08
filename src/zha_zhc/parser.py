@@ -593,21 +593,73 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         return [expose], [Binding("on_off", "genOnOff", "onOff", direction="report")], name, True
     if name == "tuyaOnOff":
         expose = Expose("switch", "state", "state", ("state", "set"))
-        supported_options = {"switchType"}
+        supported_options = {"switchType", "onOffCountdown"}
         unsupported_options = set(args) - supported_options
         bindings = [Binding("on_off", "genOnOff", "onOff", direction="report")]
+        exposes = [expose]
+        if "onOffCountdown" in args and args["onOffCountdown"] is True:
+            exposes.append(
+                Expose(
+                    "numeric",
+                    "countdown",
+                    "countdown",
+                    ("state", "set"),
+                    unit="s",
+                    value_min=0,
+                    value_max=43200,
+                    value_step=1,
+                )
+            )
+            bindings.extend(
+                [
+                    Binding("on_off_countdown", "genOnOff", "onTime", direction="report"),
+                    Binding("on_off_countdown", "genOnOff", command="state", direction="command"),
+                    Binding("on_off_countdown", "genOnOff", command="onWithTimedOff", direction="command"),
+                ]
+            )
+        elif "onOffCountdown" in args:
+            unsupported_options.add("onOffCountdown")
         if args.get("switchType") is True:
-            exposes = [expose, Expose(
-                "enum",
-                "switch_type",
-                "switch_type",
-                ("state", "set"),
-                values=("toggle", "state", "momentary"),
-                category="config",
-            )]
-            bindings.append(Binding("switch_type", "manuSpecificTuya3", "switchType", direction="report"))
-        else:
-            exposes = [expose]
+            exposes.append(
+                Expose(
+                    "enum",
+                    "switch_type",
+                    "switch_type",
+                    ("state", "set"),
+                    values=("toggle", "state", "momentary"),
+                    category="config",
+                )
+            )
+            switch_type_expression = Expression("lookup", ({"0": "toggle", "1": "state", "2": "momentary"},))
+            bindings.extend(
+                [
+                    Binding("switch_type", "manuSpecificTuya3", "switchType", direction="report", expression=switch_type_expression),
+                    Binding("switch_type", "manuSpecificTuya3", "switchType", direction="command", expression=switch_type_expression),
+                ]
+            )
+        # tuyaOnOff uses the legacy genOnOff power-on behavior unless an
+        # alternative behavior option is explicitly selected.
+        if not any(option in args for option in ("powerOnBehavior2", "powerOnBehavior3")):
+            exposes.append(
+                Expose(
+                    "enum",
+                    "power_on_behavior",
+                    "power_on_behavior",
+                    ("state", "set"),
+                    values=("off", "on", "previous"),
+                    category="config",
+                )
+            )
+            power_on_behavior_expression = Expression("lookup", ({"0": "off", "1": "on", "2": "previous"},))
+            bindings.extend(
+                [
+                    Binding("power_on_behavior", "genOnOff", "moesStartUpOnOff", direction="report", expression=power_on_behavior_expression),
+                    Binding("power_on_behavior", "genOnOff", "moesStartUpOnOff", direction="command", expression=power_on_behavior_expression),
+                ]
+            )
+        for option in ("switchType", "onOffCountdown"):
+            if option in args and args[option] is not True:
+                unsupported_options.add(option)
         return exposes, bindings, name, not unsupported_options
     if name == "battery":
         exposes = []

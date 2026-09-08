@@ -36,6 +36,14 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "window_covering": 0x0102,
     "closuresDoorLock": 0x0101,
     "door_lock": 0x0101,
+    "manuSpecificTuya3": 0xE001,
+}
+
+ZHA_ATTRIBUTE_NAMES: dict[str, str] = {
+    "onOff": "on_off",
+    "onTime": "on_time",
+    "moesStartUpOnOff": "moes_start_up_on_off",
+    "switchType": "switch_type",
 }
 
 
@@ -63,6 +71,9 @@ class RuntimeWrite:
     attribute: str | int
     value: Any
     endpoint: str | int | None = None
+    operation: str = "write"
+    command: str | None = None
+    payload: dict[str, Any] | None = None
 
 
 @dataclass
@@ -129,13 +140,68 @@ def make_write(plan: RuntimePlan, property_name: str, value: Any) -> RuntimeWrit
     entity = next((item for item in plan.entities if item.property == property_name or item.name == property_name), None)
     if entity is None or "set" not in entity.access or entity.cluster is None or entity.attribute is None:
         raise KeyError(f"no writable binding for {property_name!r}")
-    binding = next(
-        (item for item in plan.bindings if _same_cluster(item.cluster, entity.cluster) and _same_attribute(item.attribute, entity.attribute)),
-        None,
-    )
+    binding = _write_binding(plan, entity, property_name)
     if binding is None:
         raise KeyError(f"no writable binding for {property_name!r}")
-    return RuntimeWrite(entity.cluster, entity.attribute, value, entity.endpoint)
+    if binding.converter == "on_off_countdown":
+        if property_name == "countdown":
+            if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 43200:
+                raise ValueError("countdown must be an integer between 0 and 43200 seconds")
+            return RuntimeWrite(
+                entity.cluster,
+                entity.attribute,
+                value,
+                entity.endpoint,
+                operation="command",
+                command="onWithTimedOff",
+                payload={"ctrlbits": 0, "ontime": value, "offwaittime": value},
+            )
+        if property_name == "state":
+            return RuntimeWrite(
+                entity.cluster,
+                entity.attribute,
+                value,
+                entity.endpoint,
+                operation="command",
+                command=_on_off_command(value),
+                payload={},
+            )
+    return RuntimeWrite(entity.cluster, entity.attribute, _apply_write_expression(value, binding), entity.endpoint)
+
+
+def _write_binding(plan: RuntimePlan, entity: RuntimeEntity, property_name: str) -> Binding | None:
+    if property_name in {"state", "countdown"}:
+        countdown_binding = next(
+            (
+                item
+                for item in plan.bindings
+                if item.converter == "on_off_countdown"
+                and _same_cluster(item.cluster, entity.cluster)
+                and item.direction == "command"
+                and item.command == ("state" if property_name == "state" else "onWithTimedOff")
+            ),
+            None,
+        )
+        if countdown_binding is not None:
+            return countdown_binding
+    return next(
+        (
+            item
+            for item in plan.bindings
+            if _same_cluster(item.cluster, entity.cluster)
+            and _same_attribute(item.attribute, entity.attribute)
+            and item.direction in {"command", "report", "event"}
+        ),
+        None,
+    )
+
+
+def _on_off_command(value: Any) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, str) and value.lower() in {"on", "off", "toggle"}:
+        return value.lower()
+    raise ValueError("state must be a boolean or one of on, off, toggle")
 
 
 def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | None:
@@ -148,7 +214,9 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
         "contact": "contact",
         "switch": "on_off",
         "light": "light",
-    }.get(expose.type, expose.name)
+    }.get(expose.type) or {
+        "countdown": "on_off_countdown",
+    }.get(expose.name, expose.name)
     return next((item for item in bindings if item.converter.rsplit(".", 1)[-1] == semantic), None) or next(
         (item for item in bindings if item.attribute == expose.property), None
     )
@@ -175,6 +243,23 @@ def _apply_expression(value: Any, binding: Binding) -> Any:
         divisor = binding.expression.args[0]
         if isinstance(value, (int, float)) and isinstance(divisor, (int, float)) and divisor != 0:
             return value / divisor
+    if binding.expression.op == "lookup" and binding.expression.args:
+        lookup = binding.expression.args[0]
+        if isinstance(lookup, dict):
+            return lookup.get(str(value), value)
+    return value
+
+
+def _apply_write_expression(value: Any, binding: Binding) -> Any:
+    if binding.expression is None or not binding.expression.args:
+        return value
+    if binding.expression.op == "lookup" and isinstance(binding.expression.args[0], dict):
+        for raw_value, exposed_value in binding.expression.args[0].items():
+            if exposed_value == value:
+                try:
+                    return int(raw_value)
+                except (TypeError, ValueError):
+                    return raw_value
     return value
 
 
@@ -205,7 +290,10 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
         plan = build_runtime_plan(device)
         for signature in signatures:
             builder = builder_factory(signature["manufacturerName"], signature["modelID"])
+            custom_clusters_ready = _configure_custom_clusters(builder, plan)
             for expose, entity in zip(device.exposes, plan.entities, strict=False):
+                if _requires_custom_cluster(plan, entity) and not custom_clusters_ready:
+                    continue
                 _apply_expose(builder, expose, entity)
             add_to_registry = getattr(builder, "add_to_registry", None)
             if callable(add_to_registry):
@@ -236,15 +324,19 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
         return
     kwargs = {"fallback_name": expose.name}
     if entity.attribute is not None:
-        kwargs["attribute_name"] = entity.attribute
-    if expose.unit:
-        kwargs["unit"] = expose.unit
+        kwargs["attribute_name"] = ZHA_ATTRIBUTE_NAMES.get(str(entity.attribute), entity.attribute)
     if expose.device_class:
         kwargs["device_class"] = expose.device_class
     if expose.value_min is not None:
         kwargs["min_value"] = expose.value_min
     if expose.value_max is not None:
         kwargs["max_value"] = expose.value_max
+    if expose.value_step is not None:
+        kwargs["step"] = expose.value_step
+    if expose.endpoint is not None:
+        kwargs["endpoint_id"] = expose.endpoint
+    if expose.unit:
+        kwargs["unit"] = _zha_unit(expose.unit)
     if entity.cluster is not None:
         kwargs["cluster_id"] = ZCL_CLUSTER_IDS.get(entity.cluster, entity.cluster) if isinstance(entity.cluster, str) else entity.cluster
     try:
@@ -253,3 +345,114 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
         # Builder signatures differ slightly between ZHA releases. The
         # portable IR remains available even when optional metadata is new.
         method(fallback_name=expose.name)
+
+
+def _is_command_backed(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
+    return entity.property == "countdown" and any(
+        binding.converter == "on_off_countdown"
+        and binding.command == "onWithTimedOff"
+        and _same_cluster(binding.cluster, entity.cluster)
+        for binding in plan.bindings
+    )
+
+
+def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
+    return _is_command_backed(plan, entity) or (
+        entity.cluster in {"genOnOff", "manuSpecificTuya3"}
+        and entity.attribute in {"moesStartUpOnOff", "switchType"}
+    )
+
+
+def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
+    """Install the small Python-only custom clusters required by Tuya entities."""
+    required: dict[Any, set[Any]] = {}
+    for entity in plan.entities:
+        if not _requires_custom_cluster(plan, entity):
+            continue
+        if entity.cluster == "genOnOff" or _is_command_backed(plan, entity):
+            required.setdefault(_tuya_on_off_cluster, set()).add(entity.endpoint or 1)
+        elif entity.cluster == "manuSpecificTuya3":
+            required.setdefault(_tuya3_cluster, set()).add(entity.endpoint or 1)
+    if not required:
+        return True
+    replaces = getattr(builder, "replaces", None)
+    if not callable(replaces):
+        return False
+    for cluster_factory, endpoints in required.items():
+        try:
+            cluster = cluster_factory()
+        except ImportError:
+            return False
+        for endpoint in endpoints:
+            replaces(cluster, endpoint_id=endpoint)
+    return True
+
+
+def _zha_unit(unit: str) -> Any:
+    if unit == "s":
+        try:
+            from zigpy.quirks.v2.homeassistant import UnitOfTime  # type: ignore
+
+            return UnitOfTime.SECONDS
+        except ImportError:
+            try:
+                from zha.units import UnitOfTime  # type: ignore
+
+                return UnitOfTime.SECONDS
+            except ImportError:
+                pass
+    return unit
+
+
+def _tuya_on_off_cluster() -> Any:
+    """Return a Python-only OnOff replacement for Tuya attributes and countdown."""
+    import zigpy.types as t  # type: ignore
+    from zigpy.zcl import foundation  # type: ignore
+    from zigpy.zcl.clusters.general import OnOff  # type: ignore
+    from zigpy.zcl.foundation import ZCLAttributeDef  # type: ignore
+    from zhaquirks.clusters import CustomCluster  # type: ignore
+
+    class TuyaOnOffCluster(OnOff, CustomCluster):
+        class AttributeDefs(OnOff.AttributeDefs):
+            moes_start_up_on_off = ZCLAttributeDef(id=0x8002, type=t.enum8, access="rw")
+
+        async def write_attributes(self, attributes: dict[Any, Any], *args: Any, **kwargs: Any) -> Any:
+            on_time = OnOff.AttributeDefs.on_time
+            countdown = None
+            for attribute, value in attributes.items():
+                attribute_id = self.attributes_by_name[attribute].id if isinstance(attribute, str) else getattr(attribute, "id", attribute)
+                if attribute_id == on_time.id:
+                    countdown = value
+            if countdown is None:
+                return await super().write_attributes(attributes, *args, **kwargs)
+            if not isinstance(countdown, int) or isinstance(countdown, bool) or not 0 <= countdown <= 43200:
+                raise ValueError("countdown must be an integer between 0 and 43200 seconds")
+            await self.command(
+                OnOff.ServerCommandDefs.on_with_timed_off.id,
+                on_off_control=0,
+                on_time=countdown,
+                off_wait_time=countdown,
+            )
+            self._update_attribute(on_time.id, countdown)
+            statuses = [foundation.WriteAttributesStatusRecord(foundation.Status.SUCCESS) for _ in attributes]
+            return [statuses]
+
+    return TuyaOnOffCluster
+
+
+def _tuya3_cluster() -> Any:
+    """Return the declarative Tuya manufacturer cluster used by switch options."""
+    import zigpy.types as t  # type: ignore
+    from zigpy.zcl.foundation import BaseAttributeDefs, ZCLAttributeDef  # type: ignore
+    from zhaquirks.clusters import CustomCluster  # type: ignore
+
+    class Tuya3Cluster(CustomCluster):
+        cluster_id = 0xE001
+        name = "Tuya3Cluster"
+        ep_attribute = "tuya3"
+
+        class AttributeDefs(BaseAttributeDefs):
+            power_on_behavior = ZCLAttributeDef(id=0xD010, type=t.enum8, access="rw")
+            switch_type = ZCLAttributeDef(id=0xD030, type=t.enum8, access="rw")
+
+    return Tuya3Cluster

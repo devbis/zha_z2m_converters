@@ -48,7 +48,7 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("no usable data path", report.partial_reasons)
         self.assertIn("no usable data path", format_report(report))
 
-    def test_fingerprint_device_is_usable_when_standard_on_off_path_exists(self) -> None:
+    def test_fingerprint_device_is_fully_supported_with_static_tuya_on_off(self) -> None:
         source = """
         export const definitions = [{
             fingerprint: [...tuya.fingerprint("TS0001", ["_TZ3000_46t1rvdu"])],
@@ -60,8 +60,8 @@ class CoverageTests(unittest.TestCase):
         from zha_zhc.parser import parse_source
 
         report = build_report(parse_source(source, "whd02.ts"))
-        self.assertEqual(report.fully_supported, 0)
-        self.assertEqual(report.usable_partial, 1)
+        self.assertEqual(report.fully_supported, 1)
+        self.assertEqual(report.usable_partial, 0)
         self.assertEqual(report.unusable_partial, 0)
 
     def test_unsupported_macros_are_comma_separated(self) -> None:
