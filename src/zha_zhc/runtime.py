@@ -396,11 +396,11 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
 
 
 def _prevent_unrepresented_default_entities(builder: Any, plan: RuntimePlan) -> None:
-    """Prevent ZHA from creating entities for unsupported measurement clusters.
+    """Prevent ZHA from creating entities not represented by the converter.
 
     ZHA creates entities directly from standard clusters advertised by a device.
-    That is useful for regular quirks, but it can expose fake zero-valued power
-    sensors when a converter definition does not support those clusters. Keep
+    That is useful for regular quirks, but it can expose duplicate or fake
+    entities when a converter definition provides its own representation. Keep
     the suppression narrow and only apply it when the declarative definition
     has no entity mapped to the cluster.
     """
@@ -415,6 +415,8 @@ def _prevent_unrepresented_default_entities(builder: Any, plan: RuntimePlan) -> 
         for cluster_id in (_cluster_id(entity.cluster),)
         if cluster_id is not None
     }
+    if any(entity.type == "switch" and _cluster_id(entity.cluster) == 0x0006 for entity in plan.entities):
+        prevent(cluster_id=0x0006)
     for cluster_id in (0x0B04, 0x0702):
         if cluster_id in represented_clusters:
             continue
@@ -569,13 +571,23 @@ def _tuya_on_off_cluster() -> Any:
 
         async def write_attributes(self, attributes: dict[Any, Any], *args: Any, **kwargs: Any) -> Any:
             on_time = OnOff.AttributeDefs.on_time
+            on_off = OnOff.AttributeDefs.on_off
             countdown = None
+            state = None
             for attribute, value in attributes.items():
                 attribute_id = self.attributes_by_name[attribute].id if isinstance(attribute, str) else getattr(attribute, "id", attribute)
                 if attribute_id == on_time.id:
                     countdown = value
+                elif attribute_id == on_off.id:
+                    state = bool(value)
             if countdown is None:
-                return await super().write_attributes(attributes, *args, **kwargs)
+                if state is None:
+                    return await super().write_attributes(attributes, *args, **kwargs)
+                command = OnOff.ServerCommandDefs.on if state else OnOff.ServerCommandDefs.off
+                await self.command(command.id)
+                self._update_attribute(on_off.id, state)
+                statuses = [foundation.WriteAttributesStatusRecord(foundation.Status.SUCCESS) for _ in attributes]
+                return [statuses]
             if not isinstance(countdown, int) or isinstance(countdown, bool) or not 0 <= countdown <= 43200:
                 raise ValueError("countdown must be an integer between 0 and 43200 seconds")
             await self.command(
