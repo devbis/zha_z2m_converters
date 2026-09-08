@@ -1,0 +1,585 @@
+"""Static parser for the safe, declarative subset of converter definitions."""
+
+from __future__ import annotations
+
+import ast
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from .lexer import Token, tokenize
+from .mapping import CONVERTER_MAP
+from .model import Binding, DeviceDefinition, Diagnostic, Expose, Expression, ParseResult
+from .source import load_sources
+
+
+class UnsupportedSyntax(Exception):
+    pass
+
+
+@dataclass
+class _ObjectParser:
+    tokens: list[Token]
+    index: int = 0
+    constants: dict[str, Any] | None = None
+
+    def current(self) -> Token:
+        return self.tokens[self.index]
+
+    def take(self, value: str | None = None) -> Token:
+        token = self.current()
+        if value is not None and token.value != value:
+            raise UnsupportedSyntax(f"expected {value!r}, got {token.value!r}")
+        self.index += 1
+        return token
+
+    def parse_value(self) -> Any:
+        token = self.current()
+        if token.value == "{":
+            return self.parse_object()
+        if token.value == "[":
+            self.take("[")
+            values = []
+            while self.current().value != "]":
+                values.append(self.parse_value())
+                if self.current().value == ",":
+                    self.take(",")
+                elif self.current().value != "]":
+                    raise UnsupportedSyntax("expected comma in array")
+            self.take("]")
+            return values
+        if token.kind == "string":
+            self.take()
+            return _decode_string(token.value)
+        if token.kind == "number":
+            self.take()
+            value = token.value.replace("_", "")
+            try:
+                return int(value, 0) if not any(c in value for c in ".eE") else float(value)
+            except ValueError as exc:
+                raise UnsupportedSyntax(f"invalid number {value}") from exc
+        if token.value in ("true", "false", "null", "undefined"):
+            self.take()
+            return {"true": True, "false": False, "null": None, "undefined": None}[token.value]
+        if token.value in ("-", "+"):
+            sign = self.take().value
+            value = self.parse_value()
+            if not isinstance(value, (int, float)):
+                raise UnsupportedSyntax("unary sign requires a number")
+            return -value if sign == "-" else value
+        if token.kind == "identifier":
+            name = self.take().value
+            parts = [name]
+            while self.current().value in (".", "?."):
+                self.take()
+                parts.append(self.take().value)
+            if self.current().value == "(":
+                self.take("(")
+                args = []
+                while self.current().value != ")":
+                    args.append(self.parse_value())
+                    if self.current().value == ",":
+                        self.take(",")
+                    elif self.current().value != ")":
+                        raise UnsupportedSyntax("expected comma in call")
+                self.take(")")
+                return {"__call__": ".".join(parts), "args": args}
+            if self.constants and "." not in parts and name in self.constants:
+                return self.constants[name]
+            return {"__identifier__": ".".join(parts)}
+        raise UnsupportedSyntax(f"unsupported value {token.value!r}")
+
+    def parse_object(self) -> dict[str, Any]:
+        self.take("{")
+        result: dict[str, Any] = {}
+        while self.current().value != "}":
+            key = self.take()
+            if key.kind not in ("identifier", "string", "number"):
+                raise UnsupportedSyntax("object key must be static")
+            key_value = _decode_string(key.value) if key.kind == "string" else key.value
+            self.take(":")
+            result[str(key_value)] = self.parse_value()
+            if self.current().value == ",":
+                self.take(",")
+            elif self.current().value != "}":
+                raise UnsupportedSyntax("expected comma in object")
+        self.take("}")
+        return result
+
+    def skip_balanced(self, opening: str, closing: str) -> None:
+        self.take(opening)
+        depth = 1
+        while depth and self.current().kind != "eof":
+            token = self.take()
+            if token.value == opening:
+                depth += 1
+            elif token.value == closing:
+                depth -= 1
+        if depth:
+            raise UnsupportedSyntax("unclosed expression")
+
+
+def _decode_string(value: str) -> str:
+    if value.startswith("`"):
+        if "${" in value:
+            raise UnsupportedSyntax("template interpolation is not static")
+        return value[1:-1]
+    try:
+        return ast.literal_eval(value)
+    except (SyntaxError, ValueError) as exc:
+        raise UnsupportedSyntax(f"invalid string {value!r}") from exc
+
+
+def _validate_with_tree_sitter(text: str) -> bool:
+    """Validate syntax when optional tree-sitter dependencies are installed."""
+    try:
+        from tree_sitter import Language, Parser  # type: ignore
+        from tree_sitter_typescript import language_typescript  # type: ignore
+    except ImportError:
+        return False
+    language = language_typescript()
+    try:
+        language = Language(language)
+    except TypeError:
+        pass
+    parser = Parser(language)
+    tree = parser.parse(text.encode())
+    return not tree.root_node.has_error
+
+
+def _find_assignments(tokens: list[Token], names: set[str]) -> list[tuple[Token, Any]]:
+    found: list[tuple[Token, Any]] = []
+    for index, token in enumerate(tokens):
+        if token.kind != "identifier" or token.value not in names:
+            continue
+        equals = index + 1
+        # TypeScript declarations commonly contain a type annotation between
+        # the variable name and the assignment operator.
+        while equals < len(tokens) and tokens[equals].value not in ("=", ";", "{") and equals - index < 40:
+            equals += 1
+        if equals >= len(tokens) or tokens[equals].value != "=":
+            continue
+        start = equals + 1
+        if tokens[start].value not in ("{", "["):
+            continue
+        end = _matching_index(tokens, start)
+        if end is None:
+            continue
+        parser = _ObjectParser(tokens[start : end + 1])
+        try:
+            found.append((token, parser.parse_value()))
+        except UnsupportedSyntax:
+            found.append((token, None))
+    return found
+
+
+def _matching_index(tokens: list[Token], start: int) -> int | None:
+    opening = tokens[start].value
+    closing = "}" if opening == "{" else "]"
+    depth = 0
+    for index in range(start, len(tokens)):
+        if tokens[index].value == opening:
+            depth += 1
+        elif tokens[index].value == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _string(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _identifier(value: Any) -> str | None:
+    if isinstance(value, dict) and set(value) == {"__identifier__"}:
+        return str(value["__identifier__"])
+    return _string(value)
+
+
+def _call_name(value: Any) -> str | None:
+    if isinstance(value, dict) and "__call__" in value:
+        return str(value["__call__"])
+    return _identifier(value)
+
+
+def _expose(value: Any) -> Expose | None:
+    if isinstance(value, dict) and "__call__" in value:
+        call = str(value["__call__"]).rsplit(".", 1)[-1]
+        args = value.get("args", [])
+        if not isinstance(args, list):
+            args = []
+        name = next((item for item in args if isinstance(item, str)), call)
+        aliases = {
+            "temperature": "temperature",
+            "humidity": "humidity",
+            "pressure": "pressure",
+            "illuminance": "illuminance",
+            "occupancy": "occupancy",
+            "contact": "contact",
+            "battery": "battery",
+            "voltage": "voltage",
+            "current": "current",
+            "power": "power",
+            "energy": "energy",
+            "switch": "switch",
+            "light": "light",
+            "cover": "cover",
+            "lock": "lock",
+            "numeric": "numeric",
+            "number": "numeric",
+            "binary": "binary",
+            "enum": "enum",
+            "text": "text",
+            "button": "button",
+            "action": "button",
+        }
+        expose_type = aliases.get(call)
+        if expose_type:
+            return Expose(type=expose_type, name=name, property=name)
+        return None
+    if not isinstance(value, dict):
+        return None
+    kind = _string(value.get("type")) or _string(value.get("name"))
+    name = _string(value.get("name")) or _string(value.get("property"))
+    if not kind or not name:
+        return None
+    access = value.get("access", [])
+    if isinstance(access, str):
+        access = [access]
+    if not isinstance(access, list):
+        access = []
+    vals = value.get("values", [])
+    if not isinstance(vals, list):
+        vals = []
+    return Expose(
+        type=kind,
+        name=name,
+        property=_string(value.get("property")) or name,
+        access=tuple(str(item) for item in access if isinstance(item, (str, int))),
+        endpoint=value.get("endpoint") if isinstance(value.get("endpoint"), (str, int)) else None,
+        unit=_string(value.get("unit")),
+        device_class=_string(value.get("deviceClass")) or _string(value.get("device_class")),
+        state_class=_string(value.get("stateClass")) or _string(value.get("state_class")),
+        value_min=value.get("valueMin") if isinstance(value.get("valueMin"), (int, float)) else None,
+        value_max=value.get("valueMax") if isinstance(value.get("valueMax"), (int, float)) else None,
+        value_step=value.get("valueStep") if isinstance(value.get("valueStep"), (int, float)) else None,
+        values=tuple(vals),
+        description=_string(value.get("description")),
+        category=_string(value.get("category")),
+    )
+
+
+_MODERN_EXTEND_SENSOR_MACROS: dict[str, tuple[str, str, str, str | None, int | float | None]] = {
+    "temperature": ("temperature", "msTemperatureMeasurement", "measuredValue", "°C", 100),
+    "humidity": ("humidity", "msRelativeHumidity", "measuredValue", "%", 100),
+    "pressure": ("pressure", "msPressureMeasurement", "measuredValue", "kPa", 10),
+    "illuminance": ("illuminance", "msIlluminanceMeasurement", "measuredValue", "lx", None),
+    "flow": ("flow", "msFlowMeasurement", "measuredValue", "m³/h", 10),
+    "soilMoisture": ("soil_moisture", "msSoilMoisture", "measuredValue", "%", 100),
+    "windSpeed": ("wind_speed", "msWindSpeed", "measuredValue", "m/s", 100),
+    "co2": ("co2", "msCO2", "measuredValue", "ppm", None),
+    "pm25": ("pm25", "pm25Measurement", "measuredValue", "µg/m³", None),
+}
+_SUPPORTED_METADATA_MACROS = {
+    "identify",
+    "deviceEndpoints",
+    "forcePowerSource",
+    "forceDeviceType",
+    "linkQuality",
+    "quirkCheckinInterval",
+    "reconfigureReportingsOnDeviceAnnounce",
+    "skipDefaultResponse",
+    "bindCluster",
+}
+
+
+def _static_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and set(value) == {"__identifier__"}:
+        return str(value["__identifier__"]).rsplit(".", 1)[-1]
+    return None
+
+
+def _static_value(value: Any) -> str | int | float | None:
+    if isinstance(value, (str, int, float)):
+        return value
+    if isinstance(value, dict) and set(value) == {"__identifier__"}:
+        return str(value["__identifier__"]).rsplit(".", 1)[-1]
+    if isinstance(value, dict) and isinstance(value.get("ID"), (int, str)):
+        return value["ID"]
+    if isinstance(value, dict) and isinstance(value.get("ID"), dict):
+        return _static_text(value["ID"])
+    return None
+
+
+def _call_args(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    args = value.get("args", [])
+    if args and isinstance(args[0], dict) and "__call__" not in args[0] and "__identifier__" not in args[0]:
+        return args[0]
+    return {}
+
+
+def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, bool]:
+    """Expand a safe modernExtend call structurally, never by calling JS."""
+    if not isinstance(call, dict) or "__call__" not in call:
+        return [], [], None, False
+    name = str(call["__call__"]).rsplit(".", 1)[-1]
+    args = _call_args(call)
+    if name in _SUPPORTED_METADATA_MACROS:
+        return [], [], name, True
+    if name in _MODERN_EXTEND_SENSOR_MACROS:
+        expose_name, cluster, attribute, unit, scale = _MODERN_EXTEND_SENSOR_MACROS[name]
+        expose = Expose("numeric", expose_name, expose_name, ("state",), unit=unit)
+        expression = Expression("divide", (scale,)) if scale else None
+        return [expose], [Binding(name, cluster, attribute, direction="report", expression=expression)], name, True
+    if name == "onOff":
+        expose = Expose("switch", "state", "state", ("state", "set"))
+        return [expose], [Binding(name, "genOnOff", "onOff", direction="report")], name, True
+    if name == "battery":
+        exposes = []
+        if args.get("percentage", True) is not False:
+            exposes.append(Expose("numeric", "battery", "battery", ("state",), unit="%", category="diagnostic"))
+        if args.get("voltage", False) is True:
+            exposes.append(Expose("numeric", "voltage", "voltage", ("state",), unit="mV", category="diagnostic"))
+        if args.get("lowStatus", False) is True:
+            exposes.append(Expose("binary", "battery_low", "battery_low", ("state",), category="diagnostic"))
+        bindings = [Binding(name, "genPowerCfg", "batteryPercentageRemaining", direction="report", expression=Expression("divide", (2,)))]
+        if args.get("voltage", False) is True:
+            bindings.append(Binding(name, "genPowerCfg", "batteryVoltage", direction="report"))
+        return exposes, bindings, name, True
+    if name == "light":
+        exposes = [Expose("light", "light", "state", ("state", "set"))]
+        bindings = [
+            Binding(name, "genOnOff", "onOff", direction="report"),
+            Binding(name, "genLevelCtrl", "currentLevel", direction="report"),
+        ]
+        if args.get("colorTemp"):
+            exposes.append(Expose("numeric", "color_temperature", "color_temperature", ("state", "set"), unit="mired"))
+            bindings.append(Binding(name, "lightingColorCtrl", "colorTemperature", direction="report"))
+        if args.get("color"):
+            exposes.append(Expose("numeric", "color", "color", ("state", "set")))
+            bindings.append(Binding(name, "lightingColorCtrl", None, direction="report"))
+        return exposes, bindings, name, True
+    if name in {"numeric", "binary", "text", "enumLookup", "actionEnumLookup"}:
+        expose_type = {"numeric": "numeric", "binary": "binary", "text": "text", "enumLookup": "enum", "actionEnumLookup": "enum"}[name]
+        expose_name = _static_text(args.get("name")) or _static_text(args.get("property"))
+        cluster = _static_value(args.get("cluster"))
+        attribute = _static_value(args.get("attribute"))
+        if not expose_name or not cluster or not attribute:
+            return [], [], name, False
+        access = _static_text(args.get("access")) or "ALL"
+        unit = _static_text(args.get("unit"))
+        lookup = args.get("lookup")
+        values = tuple(str(item) for item in lookup if isinstance(item, (str, int))) if isinstance(lookup, dict) else ()
+        expose = Expose(
+            expose_type,
+            expose_name,
+            expose_name,
+            tuple(access.lower().split("_")),
+            endpoint=_static_text(args.get("endpointName")) or _static_text(args.get("endpoint")),
+            unit=unit,
+            value_min=args.get("valueMin") if isinstance(args.get("valueMin"), (int, float)) else None,
+            value_max=args.get("valueMax") if isinstance(args.get("valueMax"), (int, float)) else None,
+            value_step=args.get("valueStep") if isinstance(args.get("valueStep"), (int, float)) else None,
+            values=values,
+            description=_static_text(args.get("description")),
+            category=_static_text(args.get("entityCategory")),
+        )
+        scale = args.get("scale")
+        expression = Expression("divide", (scale,)) if isinstance(scale, (int, float)) and scale != 0 else None
+        return [expose], [Binding(name, cluster, attribute, direction="report", expression=expression)], name, True
+    if name == "occupancy":
+        return [Expose("occupancy", "occupancy", "occupancy", ("state",))], [Binding(name, "msOccupancySensing", "occupancy", direction="report")], name, True
+    if name == "deviceTemperature":
+        return [Expose("numeric", "device_temperature", "device_temperature", ("state",), unit="°C", category="diagnostic")], [
+            Binding(name, "genDeviceTempCfg", "currentTemperature", direction="report")
+        ], name, True
+    if name in {"electricityMeter", "gasMeter"}:
+        if name == "electricityMeter":
+            fields = [
+                ("power", "electricalMeasurement", "activePower", "W"),
+                ("voltage", "electricalMeasurement", "rmsVoltage", "V"),
+                ("current", "electricalMeasurement", "rmsCurrent", "A"),
+                ("energy", "metering", "currentSummDelivered", "kWh"),
+            ]
+        else:
+            fields = [("volume_flow_rate", "metering", "instantaneousDemand", "m³/h"), ("gas", "metering", "currentSummDelivered", "m³")]
+        exposes = []
+        bindings = []
+        for field_name, cluster, attribute, unit in fields:
+            if args.get(field_name, True) is not False:
+                exposes.append(Expose("numeric", field_name, field_name, ("state",), unit=unit))
+                bindings.append(Binding(name, cluster, attribute, direction="report"))
+        return exposes, bindings, name, True
+    if name == "windowCovering":
+        controls = args.get("controls", [])
+        controls = [item for item in controls if isinstance(item, str)] if isinstance(controls, list) else []
+        if not controls:
+            return [], [], name, False
+        exposes = [Expose("cover", "cover", "cover", ("state", "set"))]
+        bindings = [Binding(name, "closuresWindowCovering", "currentPositionLiftPercentage", direction="report")]
+        if "tilt" in controls:
+            bindings.append(Binding(name, "closuresWindowCovering", "currentPositionTiltPercentage", direction="report"))
+        return exposes, bindings, name, True
+    if name == "lock":
+        if "pinCodeCount" not in args:
+            return [], [], name, False
+        return [Expose("lock", "lock", "lock_state", ("state", "set"))], [Binding(name, "closuresDoorLock", "lockState", direction="report")], name, True
+    if name == "fan":
+        return [Expose("fan", "fan", "state", ("state", "set"))], [Binding(name, "hvacFanCtrl", "fanMode", direction="report")], name, True
+    if name == "thermostat":
+        return [Expose("climate", "climate", "local_temperature", ("state", "set"))], [Binding(name, "hvacThermostat", "localTemp", direction="report")], name, True
+    if name == "iasZoneAlarm":
+        zone_type = _static_text(args.get("zoneType"))
+        expose_type = "contact" if zone_type == "contact" else "occupancy" if zone_type in {"occupancy", "motion"} else "binary"
+        property_name = "contact" if expose_type == "contact" else "occupancy" if expose_type == "occupancy" else "alarm"
+        return [Expose(expose_type, property_name, property_name, ("state",))], [Binding(name, "ssIasZone", "zoneStatus", direction="report")], name, True
+    if name in {"commandsOnOff", "commandsLevelCtrl", "commandsColorCtrl"}:
+        defaults = {
+            "commandsOnOff": ("genOnOff", ("on", "off", "toggle")),
+            "commandsLevelCtrl": ("genLevelCtrl", ("brightness_move_to_level", "brightness_move_up", "brightness_move_down", "brightness_stop")),
+            "commandsColorCtrl": ("lightingColorCtrl", ("color_temperature_move_stop", "color_temperature_move_up", "color_temperature_move_down")),
+        }
+        cluster, default_commands = defaults[name]
+        commands = args.get("commands", default_commands)
+        if not isinstance(commands, (list, tuple)) or not all(isinstance(item, str) for item in commands):
+            return [], [], name, False
+        exposes = [Expose("enum", "action", "action", ("state",), values=tuple(commands), category="diagnostic")]
+        bindings = [Binding(name, cluster, command=command, direction="event") for command in commands]
+        return exposes, bindings, name, True
+    return [], [], name, False
+
+
+def _bindings(values: Any, direction: str) -> list[Binding]:
+    if not isinstance(values, list):
+        return []
+    result = []
+    for item in values:
+        converter = _identifier(item)
+        if converter:
+            result.append(Binding(converter=converter, direction=direction))
+    return result
+
+
+def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[Diagnostic]) -> DeviceDefinition | None:
+    model = _string(raw.get("model"))
+    vendor = _string(raw.get("vendor")) or _string(raw.get("manufacturer"))
+    raw_models = raw.get("zigbeeModel")
+    zigbee_models = []
+    if isinstance(raw_models, list):
+        zigbee_models = [item for item in raw_models if isinstance(item, str)]
+    elif isinstance(raw_models, str):
+        zigbee_models = [raw_models]
+    if not model and zigbee_models:
+        model = zigbee_models[0]
+    if not model and not zigbee_models:
+        diagnostics.append(Diagnostic("error", "missing-model", "definition has no static model/zigbeeModel", filename, token.line, token.column))
+        return None
+    raw_exposes = raw.get("exposes", [])
+    exposes = [_expose(item) for item in raw_exposes] if isinstance(raw_exposes, list) else []
+    exposes = [item for item in exposes if item is not None]
+    from_zigbee = _bindings(raw.get("fromZigbee"), "report")
+    to_zigbee = _bindings(raw.get("toZigbee"), "command")
+    extends: list[str] = []
+    unsupported_macros: list[str] = []
+    extend_values = raw.get("extend", []) if isinstance(raw.get("extend"), list) else []
+    for item in extend_values:
+        macro_name = _call_name(item)
+        if macro_name:
+            extends.append(macro_name)
+        generated_exposes, generated_from, name, supported = _modern_extend(item)
+        if name and not supported:
+            unsupported_macros.append(name)
+        exposes.extend(generated_exposes)
+        from_zigbee.extend(generated_from)
+    partial = bool(unsupported_macros)
+    for key in ("fromZigbee", "toZigbee", "exposes"):
+        value = raw.get(key)
+        if isinstance(value, list) and any(isinstance(item, dict) and _is_dynamic_value(item, key) for item in value):
+            partial = True
+    if partial and not unsupported_macros:
+        unsupported_macros.append("dynamic-expression")
+    if partial:
+        diagnostics.append(
+            Diagnostic(
+                "warning",
+                "partial-definition",
+                "dynamic converter or extend expressions were skipped; static device data was retained",
+                filename,
+                token.line,
+                token.column,
+                path=model,
+            )
+        )
+    return DeviceDefinition(
+        manufacturer=vendor,
+        model=model,
+        zigbee_models=zigbee_models or [model],
+        description=_string(raw.get("description")),
+        exposes=exposes,
+        from_zigbee=from_zigbee,
+        to_zigbee=to_zigbee,
+        extends=extends,
+        unsupported_macros=unsupported_macros,
+        source=filename,
+        source_line=token.line,
+        partial=partial,
+    )
+
+
+def _is_dynamic_value(value: dict[str, Any], key: str) -> bool:
+    if "__identifier__" in value:
+        if key in {"fromZigbee", "toZigbee"}:
+            converter = str(value["__identifier__"]).rsplit(".", 1)[-1]
+            return converter not in CONVERTER_MAP
+        return True
+    if "__unsupported__" in value:
+        return True
+    if "__call__" in value:
+        if key == "exposes":
+            return _expose(value) is None
+        return True
+    return False
+
+
+def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
+    """Parse definitions without importing or executing the source module."""
+    result = ParseResult(syntax_validated=_validate_with_tree_sitter(text))
+    tokens = tokenize(text)
+    assignments = _find_assignments(tokens, {"definitions", "definition"})
+    if not assignments:
+        result.diagnostics.append(Diagnostic("warning", "no-definitions", "no static definitions assignment found", filename))
+        return result
+    for token, value in assignments:
+        values = value if isinstance(value, list) else [value]
+        if value is None:
+            result.diagnostics.append(Diagnostic("warning", "unsupported-definition", "definition contains unsupported dynamic syntax", filename, token.line, token.column))
+            result.rejected_definitions += 1
+            continue
+        for raw in values:
+            if not isinstance(raw, dict):
+                result.diagnostics.append(Diagnostic("warning", "unsupported-definition", "definition is not a static object", filename, token.line, token.column))
+                continue
+            device = _device(raw, token, filename, result.diagnostics)
+            if device:
+                result.devices.append(device)
+    return result
+
+
+def parse_path(path: str | Path) -> ParseResult:
+    """Parse every TypeScript device source in a file or converter snapshot."""
+    combined = ParseResult()
+    for source in load_sources(path):
+        result = parse_source(source.text, source.filename)
+        combined.source_files += 1
+        combined.devices.extend(result.devices)
+        combined.diagnostics.extend(result.diagnostics)
+        combined.syntax_validated = combined.syntax_validated or result.syntax_validated
+        combined.rejected_definitions += result.rejected_definitions
+    return combined
