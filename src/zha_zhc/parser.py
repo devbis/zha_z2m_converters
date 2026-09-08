@@ -45,6 +45,20 @@ class _ObjectParser:
             self.take("[")
             values = []
             while self.current().value != "]":
+                if self.current().value == "." and self.index + 2 < len(self.tokens):
+                    spread_start = self.index
+                    if all(self.tokens[self.index + offset].value == "." for offset in range(3)):
+                        self.index += 3
+                        try:
+                            values.append({"__spread__": self.parse_value()})
+                        except UnsupportedSyntax:
+                            values.append({"__unsupported__": "array-spread"})
+                            self.skip_to_object_boundary(spread_start, boundaries=(",", "]"))
+                        if self.current().value == ",":
+                            self.take(",")
+                        elif self.current().value != "]":
+                            raise UnsupportedSyntax("expected comma after array spread")
+                        continue
                 value_start = self.index
                 try:
                     values.append(self.parse_value())
@@ -525,6 +539,32 @@ def _call_args(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _fingerprints(value: Any) -> list[dict[str, str]]:
+    """Expand static fingerprint helpers without importing converter code."""
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value:
+        if isinstance(item, dict) and "__spread__" in item:
+            call = item["__spread__"]
+            if not isinstance(call, dict) or call.get("__call__") != "tuya.fingerprint":
+                continue
+            args = call.get("args", [])
+            if len(args) != 2 or not isinstance(args[0], str) or not isinstance(args[1], list):
+                continue
+            for manufacturer in args[1]:
+                if isinstance(manufacturer, str):
+                    result.append({"modelID": args[0], "manufacturerName": manufacturer})
+            continue
+        if not isinstance(item, dict):
+            continue
+        model_id = _static_text(item.get("modelID"))
+        manufacturer = _static_text(item.get("manufacturerName"))
+        if model_id and manufacturer:
+            result.append({"modelID": model_id, "manufacturerName": manufacturer})
+    return result
+
+
 def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, bool]:
     """Expand a safe modernExtend call structurally, never by calling JS."""
     if not isinstance(call, dict) or "__call__" not in call:
@@ -539,6 +579,10 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         name = "onOff"
     if name in _SUPPORTED_METADATA_MACROS:
         return [], [], name, True
+    if name == "tuyaBase":
+        # The argument-free base is safe for the standard Tuya device setup.
+        # DP converters, time sync, and polling require executable handlers.
+        return [], [], name, not args
     if name in _MODERN_EXTEND_SENSOR_MACROS:
         expose_name, cluster, attribute, unit, scale = _MODERN_EXTEND_SENSOR_MACROS[name]
         expose = Expose("numeric", expose_name, expose_name, ("state",), unit=unit)
@@ -546,7 +590,25 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         return [expose], [Binding(name, cluster, attribute, direction="report", expression=expression)], name, True
     if name == "onOff":
         expose = Expose("switch", "state", "state", ("state", "set"))
-        return [expose], [Binding(name, "genOnOff", "onOff", direction="report")], name, True
+        return [expose], [Binding("on_off", "genOnOff", "onOff", direction="report")], name, True
+    if name == "tuyaOnOff":
+        expose = Expose("switch", "state", "state", ("state", "set"))
+        supported_options = {"switchType"}
+        unsupported_options = set(args) - supported_options
+        bindings = [Binding("on_off", "genOnOff", "onOff", direction="report")]
+        if args.get("switchType") is True:
+            exposes = [expose, Expose(
+                "enum",
+                "switch_type",
+                "switch_type",
+                ("state", "set"),
+                values=("toggle", "state", "momentary"),
+                category="config",
+            )]
+            bindings.append(Binding("switch_type", "manuSpecificTuya3", "switchType", direction="report"))
+        else:
+            exposes = [expose]
+        return exposes, bindings, name, not unsupported_options
     if name == "battery":
         exposes = []
         if args.get("percentage", True) is not False:
@@ -718,6 +780,7 @@ def _configure_reporting_actions(
                 minimum_interval=minimum,
                 maximum_interval=maximum,
                 reportable_change=change,
+                target="device",
             )
         )
     return actions
@@ -786,10 +849,11 @@ def _reporting_helper_actions(call: str | None, args: list[Any], locals_: dict[s
             minimum_interval=minimum,
             maximum_interval=maximum,
             reportable_change=change,
+            target="device",
         )
     ]
     if reads_after:
-        actions.append(ConfigureAction("read", endpoint, cluster, attributes=(attribute,)))
+        actions.append(ConfigureAction("read", endpoint, cluster, attributes=(attribute,), target="device"))
     return actions
 
 
@@ -835,7 +899,7 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                     cluster = _static_value(args[0])
                     attributes = tuple(_static_value(item) for item in args[1])
                     if isinstance(cluster, (str, int)) and all(isinstance(item, (str, int)) for item in attributes):
-                        actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes))
+                        actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes, target="device"))
                     else:
                         unsupported = True
                 else:
@@ -843,6 +907,20 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             continue
         call = _call_name(statement)
         args = statement.get("args", [])
+        if call == "tuya.configureMagicPacket":
+            if len(args) == 2 and _identifier(args[0]) == "device" and _is_coordinator_endpoint(args[1]):
+                actions.append(
+                    ConfigureAction(
+                        "read",
+                        0,
+                        "genBasic",
+                        attributes=("manufacturerName", "zclVersion", "appVersion", "modelId", "powerSource", 0xFFFE),
+                        target="device",
+                    )
+                )
+            else:
+                unsupported = True
+            continue
         if call and not call.startswith("reporting.") and call.rsplit(".", 1)[-1] in {"bind", "read", "configureReporting"}:
             method_name = call.rsplit(".", 1)[-1]
             receiver = {"__identifier__": call.rsplit(".", 1)[0]}
@@ -866,7 +944,7 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                 cluster = _static_value(args[0])
                 attributes = tuple(_static_value(item) for item in args[1])
                 if isinstance(cluster, (str, int)) and all(isinstance(item, (str, int)) for item in attributes):
-                    actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes))
+                    actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes, target="device"))
                 else:
                     unsupported = True
                 continue
@@ -884,7 +962,7 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             if endpoint is None:
                 unsupported = True
             else:
-                actions.append(ConfigureAction("read", endpoint, "seMetering", attributes=("multiplier", "divisor")))
+                actions.append(ConfigureAction("read", endpoint, "seMetering", attributes=("multiplier", "divisor"), target="device"))
             continue
         if call == "reporting.readEletricalMeasurementMultiplierDivisors":
             endpoint = _configure_endpoint(args[0], locals_) if args and len(args) <= 2 else None
@@ -902,7 +980,7 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                 )
                 if read_frequency:
                     attributes += ("acFrequencyDivisor", "acFrequencyMultiplier")
-                actions.append(ConfigureAction("read", endpoint, "haElectricalMeasurement", attributes=attributes))
+                actions.append(ConfigureAction("read", endpoint, "haElectricalMeasurement", attributes=attributes, target="device"))
             continue
         helper_actions = _reporting_helper_actions(call, args, locals_)
         if helper_actions is not None:
@@ -939,6 +1017,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         diagnostics.append(Diagnostic("error", "missing-model", "definition has no static model/zigbeeModel", filename, token.line, token.column))
         return None
     raw_exposes = raw.get("exposes", [])
+    fingerprints = _fingerprints(raw.get("fingerprint"))
     exposes = [_expose(item) for item in raw_exposes] if isinstance(raw_exposes, list) else []
     exposes = [item for item in exposes if item is not None]
     from_zigbee = _bindings(raw.get("fromZigbee"), "report")
@@ -993,6 +1072,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         manufacturer=vendor,
         model=model,
         zigbee_models=zigbee_models or [model],
+        fingerprints=fingerprints,
         description=_string(raw.get("description")),
         exposes=exposes,
         from_zigbee=from_zigbee,
@@ -1042,7 +1122,7 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
             if not isinstance(raw, dict):
                 result.diagnostics.append(Diagnostic("warning", "unsupported-definition", "definition is not a static object", filename, token.line, token.column))
                 continue
-            if set(raw) == {"__unsupported__"}:
+            if set(raw) in ({"__unsupported__"}, {"__spread__"}):
                 # A spread entry from an aggregate index is not a device object.
                 continue
             device = _device(raw, token, filename, result.diagnostics)

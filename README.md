@@ -65,6 +65,11 @@ The current plan covers standard temperature, humidity, pressure, battery,
 occupancy, and on/off attribute mappings. `register_with_zha` uses the same
 plan when adapting entities to the installed ZHA `QuirkBuilder`.
 
+Static device fingerprints such as `tuya.fingerprint("TS0001", ["_TZ..."])`
+are preserved in the IR. The ZHA adapter registers one builder signature per
+fingerprint, so vendor-specific manufacturer names and model IDs can match
+without executing the converter module.
+
 Simple declarative configure callbacks are also represented in the plan. The
 initial whitelist includes endpoint-to-coordinator cluster binds written as
 `device.getEndpoint(1).bind(coordinatorEndpoint, "hvacThermostat")` or
@@ -72,3 +77,8 @@ initial whitelist includes endpoint-to-coordinator cluster binds written as
 attribute reads, static `endpoint.configureReporting(...)` payloads, and common
 static reporting helpers such as `reporting.temperature(endpoint)`. Other
 callback statements remain marked as partial and are never executed.
+
+The safe Tuya subset currently includes the argument-free `tuyaBase()`,
+standard `tuyaOnOff()` switch bindings, static Tuya fingerprints, and
+`tuya.configureMagicPacket` as a `genBasic` read plan. Optional device-specific
+features that require custom converter behavior remain explicitly partial.

@@ -97,6 +97,49 @@ class ParserTests(unittest.TestCase):
         self.assertIn("battery", [item.name for item in device.exposes])
         self.assertIn("lightingColorCtrl", [item.cluster for item in device.from_zigbee])
 
+    def test_tuya_fingerprint_and_on_off_extend_are_recovered(self) -> None:
+        source = """
+        export const definitions = [{
+            fingerprint: [...tuya.fingerprint("TS0001", ["_TZ3000_46t1rvdu"])],
+            model: "WHD02",
+            vendor: "Tuya",
+            extend: [tuya.modernExtend.tuyaBase(), tuya.modernExtend.tuyaOnOff({switchType: true, onOffCountdown: true})],
+            configure: async (device, coordinatorEndpoint) => {
+                await tuya.configureMagicPacket(device, coordinatorEndpoint);
+                const endpoint = device.getEndpoint(1);
+                await reporting.bind(endpoint, coordinatorEndpoint, ["genOnOff"]);
+                await reporting.onOff(endpoint);
+            },
+        }];
+        """
+        device = parse_source(source, "whd02.ts").devices[0]
+        self.assertEqual(device.fingerprints, [{"modelID": "TS0001", "manufacturerName": "_TZ3000_46t1rvdu"}])
+        self.assertTrue(device.partial)
+        self.assertIn("state", [item.name for item in device.exposes])
+        self.assertIn("switch_type", [item.name for item in device.exposes])
+        self.assertEqual(device.configure_actions[0].operation, "read")
+        self.assertEqual(device.configure_actions[0].target, "device")
+        self.assertEqual(device.configure_actions[0].attributes[-1], 0xFFFE)
+        self.assertEqual(device.configure_actions[-1].cluster, "genOnOff")
+
+        calls = []
+
+        class Builder:
+            def __init__(self, manufacturer, model):
+                calls.append((manufacturer, model))
+
+            def switch(self, **kwargs):
+                pass
+
+            def select(self, **kwargs):
+                pass
+
+            def add_to_registry(self):
+                pass
+
+        register_with_zha(register_result(parse_source(source)), Builder)
+        self.assertEqual(calls, [("_TZ3000_46t1rvdu", "TS0001")])
+
     def test_vendor_light_aliases_use_safe_light_expansion(self) -> None:
         source = """
         export const definitions = [{

@@ -201,13 +201,15 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
     for device in registry.devices:
         if not device.manufacturer or not device.model:
             continue
-        builder = builder_factory(device.manufacturer, device.model)
+        signatures = device.fingerprints or [{"manufacturerName": device.manufacturer, "modelID": device.model}]
         plan = build_runtime_plan(device)
-        for expose, entity in zip(device.exposes, plan.entities, strict=False):
-            _apply_expose(builder, expose, entity)
-        add_to_registry = getattr(builder, "add_to_registry", None)
-        if callable(add_to_registry):
-            add_to_registry()
+        for signature in signatures:
+            builder = builder_factory(signature["manufacturerName"], signature["modelID"])
+            for expose, entity in zip(device.exposes, plan.entities, strict=False):
+                _apply_expose(builder, expose, entity)
+            add_to_registry = getattr(builder, "add_to_registry", None)
+            if callable(add_to_registry):
+                add_to_registry()
     return registry
 
 

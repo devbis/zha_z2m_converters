@@ -79,6 +79,7 @@ class DeviceDefinition:
     manufacturer: str | None = None
     model: str | None = None
     zigbee_models: list[str] = field(default_factory=list)
+    fingerprints: list[dict[str, str]] = field(default_factory=list)
     description: str | None = None
     exposes: list[Expose] = field(default_factory=list)
     from_zigbee: list[Binding] = field(default_factory=list)
