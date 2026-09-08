@@ -2,13 +2,14 @@
 
 from .exporter import export_python
 from .coverage import CoverageReport, build_report, format_report
-from .model import DeviceDefinition, ParseResult
+from .model import ConfigureAction, DeviceDefinition, ParseResult
 from .parser import parse_path, parse_source
 from .runtime import RuntimePlan, RuntimeReport, RuntimeWrite, apply_report, build_runtime_plan, make_write
 from .source import SourceFile, load_source, load_sources
 
 __all__ = [
     "DeviceDefinition",
+    "ConfigureAction",
     "CoverageReport",
     "ParseResult",
     "RuntimePlan",

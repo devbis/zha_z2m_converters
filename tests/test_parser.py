@@ -116,7 +116,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.unsupported_macros, [])
         self.assertGreaterEqual(len(device.exposes), 3)
 
-    def test_fluent_exposes_and_dynamic_fields_are_recovered_safely(self) -> None:
+    def test_fluent_exposes_and_simple_configure_are_recovered_safely(self) -> None:
         source = """
         export const definitions = [{
             zigbeeModel: ["CLIMATE"],
@@ -132,8 +132,47 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(result.rejected_definitions, 0)
         self.assertEqual(len(result.devices), 1)
         self.assertEqual(result.devices[0].exposes[0].type, "climate")
-        self.assertTrue(result.devices[0].partial)
-        self.assertEqual(result.devices[0].unsupported_fields, ["configure"])
+        self.assertFalse(result.devices[0].partial)
+        self.assertEqual(result.devices[0].configure_actions[0].cluster, "hvacThermostat")
+
+    def test_simple_configure_bind_is_extracted_without_execution(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["THERMOSTAT"],
+            model: "Thermostat",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                await device.getEndpoint(1).bind(coordinatorEndpoint, "hvacThermostat");
+            },
+        }];
+        """
+        result = parse_source(source, "configure.ts")
+        device = result.devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(len(device.configure_actions), 1)
+        self.assertEqual(device.configure_actions[0].endpoint, 1)
+        self.assertEqual(device.configure_actions[0].cluster, "hvacThermostat")
+        plan = build_runtime_plan(device)
+        self.assertEqual(plan.configure_actions, device.configure_actions)
+
+    def test_reporting_bind_and_endpoint_local_are_extracted(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["SENSOR"],
+            model: "Sensor",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(2);
+                await reporting.bind(endpoint, coordinatorEndpoint, ["genPowerCfg", "msTemperatureMeasurement"]);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-reporting.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.endpoint, item.cluster) for item in device.configure_actions],
+            [(2, "genPowerCfg"), (2, "msTemperatureMeasurement")],
+        )
 
     def test_object_and_array_spreads_do_not_reject_static_definition(self) -> None:
         source = """

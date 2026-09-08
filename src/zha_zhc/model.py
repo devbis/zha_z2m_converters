@@ -60,6 +60,16 @@ class Binding:
     supported: bool = True
 
 
+@dataclass(frozen=True)
+class ConfigureAction:
+    """Safe device configuration operation extracted from a configure callback."""
+
+    operation: str
+    endpoint: str | int | None = None
+    cluster: str | int | None = None
+    target: str = "coordinator"
+
+
 @dataclass
 class DeviceDefinition:
     manufacturer: str | None = None
@@ -70,6 +80,7 @@ class DeviceDefinition:
     from_zigbee: list[Binding] = field(default_factory=list)
     to_zigbee: list[Binding] = field(default_factory=list)
     extends: list[str] = field(default_factory=list)
+    configure_actions: list[ConfigureAction] = field(default_factory=list)
     unsupported_macros: list[str] = field(default_factory=list)
     unsupported_fields: list[str] = field(default_factory=list)
     source: str | None = None

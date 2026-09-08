@@ -59,3 +59,9 @@ write = make_write(plan, "state", True)
 The current plan covers standard temperature, humidity, pressure, battery,
 occupancy, and on/off attribute mappings. `register_with_zha` uses the same
 plan when adapting entities to the installed ZHA `QuirkBuilder`.
+
+Simple declarative configure callbacks are also represented in the plan. The
+initial whitelist includes endpoint-to-coordinator cluster binds written as
+`device.getEndpoint(1).bind(coordinatorEndpoint, "hvacThermostat")` or
+`reporting.bind(endpoint, coordinatorEndpoint, ["genPowerCfg"])`. Other
+callback statements remain marked as partial and are never executed.

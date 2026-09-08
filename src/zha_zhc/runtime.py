@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .mapping import normalize_device
-from .model import Binding, DeviceDefinition, Diagnostic, Expose, ParseResult
+from .model import Binding, ConfigureAction, DeviceDefinition, Diagnostic, Expose, ParseResult
 
 
 ZCL_CLUSTER_IDS: dict[str, int] = {
@@ -70,6 +70,7 @@ class RuntimePlan:
     device: DeviceDefinition
     entities: list[RuntimeEntity] = field(default_factory=list)
     bindings: list[Binding] = field(default_factory=list)
+    configure_actions: list[ConfigureAction] = field(default_factory=list)
 
 
 @dataclass
@@ -100,7 +101,12 @@ def build_runtime_plan(device: DeviceDefinition) -> RuntimePlan:
                 access=expose.access,
             )
         )
-    return RuntimePlan(normalized, entities, [*normalized.from_zigbee, *normalized.to_zigbee])
+    return RuntimePlan(
+        normalized,
+        entities,
+        [*normalized.from_zigbee, *normalized.to_zigbee],
+        list(normalized.configure_actions),
+    )
 
 
 def apply_report(plan: RuntimePlan, report: RuntimeReport) -> dict[str, Any]:

@@ -11,7 +11,7 @@ from typing import Any
 
 from .lexer import Token, tokenize
 from .mapping import CONVERTER_MAP
-from .model import Binding, DeviceDefinition, Diagnostic, Expose, Expression, ParseResult
+from .model import Binding, ConfigureAction, DeviceDefinition, Diagnostic, Expose, Expression, ParseResult
 from .source import load_sources
 
 
@@ -26,6 +26,8 @@ class _ObjectParser:
     constants: dict[str, Any] | None = None
 
     def current(self) -> Token:
+        if self.index >= len(self.tokens):
+            return Token("eof", "", 0, 0, 0)
         return self.tokens[self.index]
 
     def take(self, value: str | None = None) -> Token:
@@ -80,7 +82,7 @@ class _ObjectParser:
             while self.current().value in (".", "?."):
                 self.take()
                 parts.append(self.take().value)
-            if self.current().value == "<":
+            if self.current().value == "<" and self.looks_like_generic_call():
                 self.skip_balanced("<", ">")
             if self.current().value == "(":
                 value: Any = {"__call__": ".".join(parts), "args": self.parse_call_args()}
@@ -112,7 +114,7 @@ class _ObjectParser:
     def parse_object(self) -> dict[str, Any]:
         self.take("{")
         result: dict[str, Any] = {}
-        while self.current().value != "}":
+        while self.current().value not in {"}", ""}:
             if self.current().value == ".":
                 value_start = self.index
                 self.skip_to_object_boundary(value_start)
@@ -127,7 +129,7 @@ class _ObjectParser:
             self.take(":")
             value_start = self.index
             try:
-                result[str(key_value)] = self.parse_value()
+                result[str(key_value)] = self.parse_configure() if key_value == "configure" else self.parse_value()
                 if self.current().value not in (",", "}"):
                     raise UnsupportedSyntax("unsupported expression after property value")
             except UnsupportedSyntax:
@@ -142,6 +144,72 @@ class _ObjectParser:
                 raise UnsupportedSyntax("expected comma in object")
         self.take("}")
         return result
+
+    def parse_configure(self) -> Any:
+        """Parse a callback shell while retaining only its static call expressions."""
+        if self.current().value == "async":
+            self.take()
+        if self.current().value != "(":
+            return self.parse_value()
+        self.skip_balanced("(", ")")
+        self.take("=>")
+        self.take("{")
+        statements: list[Any] = []
+        locals_: dict[str, Any] = {}
+        unsupported = False
+        while self.current().value != "}":
+            if self.current().value == ";":
+                self.take()
+                continue
+            statement_start = self.index
+            try:
+                if self.current().value in {"const", "let", "var"}:
+                    self.take()
+                    name = self.take()
+                    if name.kind != "identifier":
+                        raise UnsupportedSyntax("configure local name must be an identifier")
+                    while self.current().value not in {"=", ";", "}"}:
+                        self.take()
+                    self.take("=")
+                    locals_[name.value] = self.parse_value()
+                else:
+                    if self.current().value == "await":
+                        self.take()
+                    statements.append(self.parse_value())
+                if self.current().value == ";":
+                    self.take()
+                elif self.current().value != "}":
+                    raise UnsupportedSyntax("configure statement must end with a semicolon")
+            except UnsupportedSyntax:
+                unsupported = True
+                self.skip_to_object_boundary(statement_start, boundaries=(";", "}"))
+                if self.current().value == ";":
+                    self.take()
+        if self.current().value != "}":
+            raise UnsupportedSyntax("unclosed configure callback")
+        self.take("}")
+        value: dict[str, Any] = {"__configure__": statements, "__locals__": locals_}
+        if unsupported:
+            value["__unsupported__"] = "configure"
+        return value
+
+    def looks_like_generic_call(self) -> bool:
+        """Distinguish TypeScript generic calls from comparison operators."""
+        depth = 0
+        index = self.index
+        while index < len(self.tokens):
+            value = self.tokens[index].value
+            if value == "<":
+                depth += 1
+            elif value == ">":
+                depth -= 1
+                if depth == 0:
+                    next_value = self.tokens[index + 1].value if index + 1 < len(self.tokens) else ""
+                    return next_value in {"(", ".", "?."}
+            elif depth and value in {";", ",", ")", "]", "}"}:
+                return False
+            index += 1
+        return False
 
     def skip_to_object_boundary(self, start: int, boundaries: tuple[str, ...] = (",", "}")) -> None:
         """Skip one unsupported property value without crossing its object."""
@@ -605,6 +673,76 @@ def _bindings(values: Any, direction: str) -> list[Binding]:
     return result
 
 
+def _configure_endpoint(value: Any, locals_: dict[str, Any]) -> str | int | None:
+    if isinstance(value, dict) and set(value) == {"__identifier__"}:
+        local = locals_.get(str(value["__identifier__"]))
+        if local is not None:
+            return _configure_endpoint(local, locals_)
+    if isinstance(value, dict) and value.get("__call__") == "device.getEndpoint":
+        args = value.get("args", [])
+        return _static_value(args[0]) if args and isinstance(_static_value(args[0]), (str, int)) else None
+    return None
+
+
+def _is_coordinator_endpoint(value: Any) -> bool:
+    return _identifier(value) in {"coordinatorEndpoint", "coordinator"}
+
+
+def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
+    """Extract a small whitelist of bind operations from a parsed callback."""
+    if value is None or value == []:
+        return [], False
+    if not isinstance(value, dict) or "__configure__" not in value:
+        return [], True
+    locals_ = value.get("__locals__", {})
+    if not isinstance(locals_, dict):
+        locals_ = {}
+    actions: list[ConfigureAction] = []
+    unsupported = "__unsupported__" in value
+    for statement in value.get("__configure__", []):
+        if not isinstance(statement, dict):
+            unsupported = True
+            continue
+        if "__fluent__" in statement:
+            base = statement["__fluent__"]
+            endpoint = _configure_endpoint(base, locals_)
+            for method in statement.get("methods", []):
+                if method.get("name") != "bind" or endpoint is None:
+                    unsupported = True
+                    continue
+                args = method.get("args", [])
+                if len(args) != 2:
+                    unsupported = True
+                    continue
+                if _is_coordinator_endpoint(args[0]):
+                    cluster = _static_value(args[1])
+                elif _is_coordinator_endpoint(args[1]):
+                    cluster = _static_value(args[0])
+                else:
+                    cluster = None
+                if isinstance(cluster, (str, int)):
+                    actions.append(ConfigureAction("bind", endpoint, cluster))
+                else:
+                    unsupported = True
+            continue
+        call = _call_name(statement)
+        if call == "reporting.bind":
+            args = statement.get("args", [])
+            clusters = args[2] if len(args) == 3 else None
+            endpoint = _configure_endpoint(args[0], locals_) if len(args) >= 1 else None
+            if endpoint is None or len(args) != 3 or not _is_coordinator_endpoint(args[1]) or not isinstance(clusters, list):
+                unsupported = True
+                continue
+            static_clusters = [_static_value(item) for item in clusters]
+            if not static_clusters or not all(isinstance(item, (str, int)) for item in static_clusters):
+                unsupported = True
+                continue
+            actions.extend(ConfigureAction("bind", endpoint, cluster) for cluster in static_clusters)
+            continue
+        unsupported = True
+    return actions, unsupported
+
+
 def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[Diagnostic]) -> DeviceDefinition | None:
     model = _string(raw.get("model"))
     vendor = _string(raw.get("vendor")) or _string(raw.get("manufacturer"))
@@ -624,12 +762,14 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
     exposes = [item for item in exposes if item is not None]
     from_zigbee = _bindings(raw.get("fromZigbee"), "report")
     to_zigbee = _bindings(raw.get("toZigbee"), "command")
+    configure_actions, configure_unsupported = _configure_actions(raw.get("configure"))
     extends: list[str] = []
     unsupported_macros: list[str] = []
     unsupported_fields = [
         str(key)
         for key, value in raw.items()
-        if isinstance(value, dict) and "__unsupported__" in value
+        if (isinstance(value, dict) and "__unsupported__" in value)
+        or (key == "configure" and configure_unsupported)
     ]
     extend_values = raw.get("extend", []) if isinstance(raw.get("extend"), list) else []
     for item in extend_values:
@@ -669,6 +809,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         from_zigbee=from_zigbee,
         to_zigbee=to_zigbee,
         extends=extends,
+        configure_actions=configure_actions,
         unsupported_macros=unsupported_macros,
         unsupported_fields=unsupported_fields,
         source=filename,
