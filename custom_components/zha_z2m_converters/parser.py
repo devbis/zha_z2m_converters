@@ -227,7 +227,12 @@ class _ObjectParser:
             self.take(":")
             value_start = self.index
             try:
-                result[str(key_value)] = self.parse_configure() if key_value == "configure" else self.parse_value()
+                if key_value == "configure":
+                    result[str(key_value)] = self.parse_configure()
+                elif key_value == "endpoint" and self.looks_like_predicate():
+                    result[str(key_value)] = self.parse_static_endpoint()
+                else:
+                    result[str(key_value)] = self.parse_value()
                 if self.current().value not in (",", "}"):
                     raise UnsupportedSyntax("unsupported expression after property value")
             except UnsupportedSyntax:
@@ -242,6 +247,39 @@ class _ObjectParser:
                 raise UnsupportedSyntax("expected comma in object")
         self.take("}")
         return result
+
+    def parse_static_endpoint(self) -> dict[str, Any]:
+        """Parse an endpoint callback whose result is a static object."""
+        if self.current().value == "(":
+            self.skip_balanced("(", ")")
+        elif self.current().kind == "identifier":
+            self.take()
+        else:
+            raise UnsupportedSyntax("endpoint callback must have static parameters")
+        self.take("=>")
+        wrapped = False
+        if self.current().value == "(":
+            self.take("(")
+            wrapped = True
+        if self.current().value == "{":
+            self.take("{")
+            if self.current().value != "return":
+                raise UnsupportedSyntax("endpoint callback must return a static object")
+            self.take("return")
+            value = self.parse_object()
+            if self.current().value == ";":
+                self.take(";")
+            self.take("}")
+        else:
+            value = self.parse_object()
+        if wrapped:
+            self.take(")")
+        if not isinstance(value, dict) or not value or not all(
+            isinstance(key, str) and isinstance(endpoint, int) and not isinstance(endpoint, bool)
+            for key, endpoint in value.items()
+        ):
+            raise UnsupportedSyntax("endpoint map must contain only integer endpoint ids")
+        return {"__endpoint_map__": value}
 
     def parse_configure(self) -> Any:
         """Parse a callback shell while retaining only its static call expressions."""
@@ -642,6 +680,42 @@ def _static_value(value: Any) -> str | int | float | None:
     return None
 
 
+def _endpoint_map(value: Any) -> dict[str, int]:
+    """Return a static endpoint name-to-id map, if one is available."""
+    if not isinstance(value, dict) or set(value) != {"__endpoint_map__"}:
+        return {}
+    endpoints = value["__endpoint_map__"]
+    if not isinstance(endpoints, dict):
+        return {}
+    return {
+        str(name): endpoint
+        for name, endpoint in endpoints.items()
+        if isinstance(name, str) and isinstance(endpoint, int) and not isinstance(endpoint, bool)
+    }
+
+
+def _endpoint_map_for_extend(call: Any) -> dict[str, int]:
+    """Extract a static endpoint map from a deviceEndpoints extend."""
+    call_name = _call_name(call)
+    if not call_name or call_name.rsplit(".", 1)[-1] != "deviceEndpoints":
+        return {}
+    args = _call_args(call)
+    endpoints = args.get("endpoints")
+    if not isinstance(endpoints, dict):
+        return {}
+    return {
+        str(name): endpoint
+        for name, endpoint in endpoints.items()
+        if isinstance(name, str) and isinstance(endpoint, int) and not isinstance(endpoint, bool)
+    }
+
+
+def _resolve_endpoint(value: str | int | None, endpoints: dict[str, int]) -> str | int | None:
+    if isinstance(value, str):
+        return endpoints.get(value, value)
+    return value
+
+
 def _call_args(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -980,6 +1054,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
     if name == "tuyaOnOff":
         expose = Expose("switch", "state", "state", ("state", "set"))
         supported_options = {
+            "endpoints",
             "switchType",
             "onOffCountdown",
             "powerOutageMemory",
@@ -994,28 +1069,50 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
             "backlightModeOffOn",
         }
         unsupported_options = set(args) - supported_options
-        bindings = [Binding("on_off", "genOnOff", "onOff", direction="report")]
-        exposes = [expose]
+        endpoint_names = args.get("endpoints")
+        if endpoint_names is not None and (
+            not isinstance(endpoint_names, list)
+            or not endpoint_names
+            or not all(isinstance(endpoint, str) for endpoint in endpoint_names)
+        ):
+            unsupported_options.add("endpoints")
+            endpoint_names = None
+        if endpoint_names:
+            exposes = [replace(expose, endpoint=endpoint) for endpoint in endpoint_names]
+            bindings = [
+                Binding("on_off", "genOnOff", "onOff", direction="report", endpoint=endpoint)
+                for endpoint in endpoint_names
+            ]
+        else:
+            exposes = [expose]
+            bindings = [Binding("on_off", "genOnOff", "onOff", direction="report")]
         if "onOffCountdown" in args and args["onOffCountdown"] is True:
-            exposes.append(
-                Expose(
-                    "numeric",
-                    "countdown",
-                    "countdown",
-                    ("state", "set"),
-                    unit="s",
-                    value_min=0,
-                    value_max=43200,
-                    value_step=1,
+            countdown_expose = Expose(
+                "numeric",
+                "countdown",
+                "countdown",
+                ("state", "set"),
+                unit="s",
+                value_min=0,
+                value_max=43200,
+                value_step=1,
+            )
+            countdown_endpoints = endpoint_names or [None]
+            for endpoint in countdown_endpoints:
+                exposes.append(replace(countdown_expose, endpoint=endpoint))
+                bindings.extend(
+                    [
+                        Binding("on_off_countdown", "genOnOff", "onTime", direction="report", endpoint=endpoint),
+                        Binding("on_off_countdown", "genOnOff", command="state", direction="command", endpoint=endpoint),
+                        Binding(
+                            "on_off_countdown",
+                            "genOnOff",
+                            command="onWithTimedOff",
+                            direction="command",
+                            endpoint=endpoint,
+                        ),
+                    ]
                 )
-            )
-            bindings.extend(
-                [
-                    Binding("on_off_countdown", "genOnOff", "onTime", direction="report"),
-                    Binding("on_off_countdown", "genOnOff", command="state", direction="command"),
-                    Binding("on_off_countdown", "genOnOff", command="onWithTimedOff", direction="command"),
-                ]
-            )
         elif "onOffCountdown" in args and not _is_predicate(args["onOffCountdown"]):
             unsupported_options.add("onOffCountdown")
         if args.get("switchType") is True:
@@ -1039,23 +1136,38 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         # tuyaOnOff uses one of the two static Tuya power-on attributes unless
         # a manufacturer-dependent or otherwise unsupported variant is used.
         if args.get("powerOnBehavior2") is True:
-            exposes.append(
-                Expose(
-                    "enum",
-                    "power_on_behavior",
-                    "power_on_behavior",
-                    ("state", "set"),
-                    values=("off", "on", "previous"),
-                    category="config",
-                )
+            power_on_expose = Expose(
+                "enum",
+                "power_on_behavior",
+                "power_on_behavior",
+                ("state", "set"),
+                values=("off", "on", "previous"),
+                category="config",
             )
             power_on_behavior_expression = Expression("lookup", ({"0": "off", "1": "on", "2": "previous"},))
-            bindings.extend(
-                [
-                    Binding("power_on_behavior", "manuSpecificTuya3", "powerOnBehavior", direction="report", expression=power_on_behavior_expression),
-                    Binding("power_on_behavior", "manuSpecificTuya3", "powerOnBehavior", direction="command", expression=power_on_behavior_expression),
-                ]
-            )
+            power_endpoints = endpoint_names or [None]
+            for endpoint in power_endpoints:
+                exposes.append(replace(power_on_expose, endpoint=endpoint))
+                bindings.extend(
+                    [
+                        Binding(
+                            "power_on_behavior",
+                            "manuSpecificTuya3",
+                            "powerOnBehavior",
+                            direction="report",
+                            endpoint=endpoint,
+                            expression=power_on_behavior_expression,
+                        ),
+                        Binding(
+                            "power_on_behavior",
+                            "manuSpecificTuya3",
+                            "powerOnBehavior",
+                            direction="command",
+                            endpoint=endpoint,
+                            expression=power_on_behavior_expression,
+                        ),
+                    ]
+                )
         elif args.get("powerOutageMemory") is True:
             exposes.append(
                 Expose(
@@ -1768,6 +1880,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
     unsupported_macros: list[str] = []
     conditional_extends: list[dict[str, Any]] = []
     dynamic_extend = False
+    endpoint_map = _endpoint_map(raw.get("endpoint"))
     unsupported_fields = [
         str(key)
         for key, value in raw.items()
@@ -1775,6 +1888,8 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         or (key == "configure" and configure_unsupported)
     ]
     extend_values = raw.get("extend", []) if isinstance(raw.get("extend"), list) else []
+    for item in extend_values:
+        endpoint_map.update(_endpoint_map_for_extend(item))
     for item in extend_values:
         macro_name = _call_name(item)
         if macro_name:
@@ -1798,6 +1913,11 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
                 configure_actions.append(ConfigureAction("bind", 1, "genBasic"))
         if name == "tuyaOnOff":
             args = _call_args(item)
+            endpoint_names = args.get("endpoints")
+            if isinstance(endpoint_names, list) and endpoint_names and any(
+                not isinstance(endpoint, str) or endpoint not in endpoint_map for endpoint in endpoint_names
+            ):
+                supported = False
             for option, value in args.items():
                 if _is_predicate(value):
                     conditional_extends.append({"call": item, "option": option, "predicate": value})
@@ -1810,6 +1930,9 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
             )
         exposes.extend(generated_exposes)
         from_zigbee.extend(generated_from)
+    if endpoint_map:
+        exposes = [replace(expose, endpoint=_resolve_endpoint(expose.endpoint, endpoint_map)) for expose in exposes]
+        from_zigbee = [replace(binding, endpoint=_resolve_endpoint(binding.endpoint, endpoint_map)) for binding in from_zigbee]
     if dynamic_extend:
         unsupported_macros.append("dynamic-expression")
     partial = bool(unsupported_macros or unsupported_fields)

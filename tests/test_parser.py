@@ -651,6 +651,51 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(apply_report(switch_plan, RuntimeReport("genOnOff", "tuyaBacklightSwitch", 1)), {"backlight_mode": True})
         self.assertEqual(make_write(modes_plan, "backlight_mode", "normal").value, 1)
 
+    def test_tuya_on_off_endpoints_are_expanded_from_static_maps(self) -> None:
+        source = """
+        export const definitions = [
+            {
+                model: "Tuya endpoint callback",
+                vendor: "Tuya",
+                endpoint: (device) => {
+                    return {l1: 1, l2: 2};
+                },
+                extend: [tuya.modernExtend.tuyaOnOff({
+                    endpoints: ["l1", "l2"],
+                    powerOnBehavior2: true,
+                    onOffCountdown: true,
+                })],
+            },
+            {
+                model: "Tuya endpoint metadata",
+                vendor: "Tuya",
+                extend: [
+                    m.deviceEndpoints({endpoints: {l1: 1, l2: 2}}),
+                    tuya.modernExtend.tuyaOnOff({endpoints: ["l1", "l2"]}),
+                ],
+            },
+        ];
+        """
+        devices = parse_source(source, "tuya-endpoints.ts").devices
+        self.assertEqual([device.partial for device in devices], [False, False])
+        self.assertEqual(
+            [(item.name, item.endpoint) for item in devices[0].exposes],
+            [
+                ("state", 1),
+                ("state", 2),
+                ("countdown", 1),
+                ("countdown", 2),
+                ("power_on_behavior", 1),
+                ("power_on_behavior", 2),
+            ],
+        )
+        plan = build_runtime_plan(devices[0])
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("genOnOff", "onOff", True, endpoint=2)),
+            {"state": True},
+        )
+        self.assertEqual([item.endpoint for item in plan.entities], [1, 2, 1, 2, 1, 2])
+
     def test_tuya_on_off_conditional_options_are_expanded_per_fingerprint(self) -> None:
         source = (
             ROOT.parent

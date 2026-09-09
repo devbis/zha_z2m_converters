@@ -99,6 +99,7 @@ class RuntimeReport:
     attribute: str | int
     value: Any
     dp: int | None = None
+    endpoint: str | int | None = None
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,7 @@ def apply_report(plan: RuntimePlan, report: RuntimeReport) -> dict[str, Any]:
             not _same_cluster(entity.cluster, report.cluster)
             or not _same_attribute(entity.attribute, report.attribute)
             or entity.dp != report.dp
+            or (report.endpoint is not None and entity.endpoint != report.endpoint)
         ):
             continue
         for binding in plan.bindings:
