@@ -49,6 +49,7 @@ class CoverageReport:
     unsupported_fields: dict[str, int] = field(default_factory=dict)
     unsupported_exposes: dict[str, int] = field(default_factory=dict)
     unsupported_converters: dict[str, int] = field(default_factory=dict)
+    rejected_definitions: list[dict[str, Any]] = field(default_factory=list)
     devices_with_problems: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -150,6 +151,7 @@ def build_report(result: ParseResult, problem_limit: int = 50) -> CoverageReport
         unsupported_fields=dict(unsupported_fields.most_common()),
         unsupported_exposes=dict(unsupported_exposes.most_common()),
         unsupported_converters=dict(unsupported_converters.most_common()),
+        rejected_definitions=[asdict(item) for item in result.rejected_details],
         devices_with_problems=problem_devices,
     )
 
@@ -176,6 +178,15 @@ def format_report(report: CoverageReport) -> str:
     if report.unsupported_fields:
         fields = ", ".join(f"{name} ({count})" for name, count in report.unsupported_fields.items())
         lines.append(f"\nUnsupported definition fields: {fields}")
+    if report.rejected_definitions:
+        lines.append("\nRejected definitions:")
+        for item in report.rejected_definitions:
+            identity = item.get("path") or "<unknown definition>"
+            source = item.get("filename") or "<unknown source>"
+            if item.get("line") is not None:
+                source = f"{source}:{item['line']}"
+            reason = item.get("message") or "unsupported syntax"
+            lines.append(f"  - {identity} ({source}): {reason}")
     _append_section(lines, "Unsupported expose types", report.unsupported_exposes)
     _append_section(lines, "Unsupported converters", report.unsupported_converters)
     if report.devices_with_problems:

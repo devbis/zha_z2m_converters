@@ -155,6 +155,15 @@ class _ObjectParser:
                 raise UnsupportedSyntax("predicate parameter must be an identifier")
         self.take("=>")
 
+        if (
+            self.current().kind == "identifier"
+            and self.current().value == parameter.value
+            and self.index + 1 < len(self.tokens)
+            and self.tokens[self.index + 1].value in {",", "}"}
+        ):
+            self.take()
+            return {"__identity__": parameter.value}
+
         if self.current().value == "!":
             self.take("!")
             values = self.parse_value()
@@ -959,6 +968,8 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
     if name in _MODERN_EXTEND_SENSOR_MACROS:
         expose_name, cluster, attribute, unit, scale = _MODERN_EXTEND_SENSOR_MACROS[name]
         expose = Expose("numeric", expose_name, expose_name, ("state",), unit=unit)
+        if _is_identity_expression(args.get("scale")):
+            return [expose], [Binding(name, cluster, attribute, direction="report")], name, True
         expression = Expression("divide", (scale,)) if scale else None
         return [expose], [Binding(name, cluster, attribute, direction="report", expression=expression)], name, True
     if name == "onOff":
@@ -1805,6 +1816,18 @@ def _is_dynamic_value(value: dict[str, Any], key: str) -> bool:
     return False
 
 
+def _is_identity_expression(value: Any) -> bool:
+    """Return whether a parsed arrow expression returns its only parameter."""
+    return isinstance(value, dict) and set(value) == {"__identity__"}
+
+
+def _record_rejection(result: ParseResult, diagnostic: Diagnostic) -> None:
+    """Record a rejected definition in both diagnostics and the summary list."""
+    result.diagnostics.append(diagnostic)
+    result.rejected_details.append(diagnostic)
+    result.rejected_definitions += 1
+
+
 def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
     """Parse definitions without importing or executing the source module."""
     result = ParseResult(syntax_validated=_validate_with_tree_sitter(text))
@@ -1816,8 +1839,18 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
     for token, value in assignments:
         values = value if isinstance(value, list) else [value]
         if value is None:
-            result.diagnostics.append(Diagnostic("warning", "unsupported-definition", "definition contains unsupported dynamic syntax", filename, token.line, token.column))
-            result.rejected_definitions += 1
+            _record_rejection(
+                result,
+                Diagnostic(
+                    "warning",
+                    "unsupported-definition",
+                    "definition contains unsupported dynamic syntax",
+                    filename,
+                    token.line,
+                    token.column,
+                    path="definitions",
+                ),
+            )
             continue
         for raw in values:
             if not isinstance(raw, dict):
@@ -1826,7 +1859,8 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
             if set(raw) in ({"__unsupported__"}, {"__spread__"}):
                 # A spread entry from an aggregate index is not a device object.
                 if raw.get("__unsupported__") == "array-item":
-                    result.diagnostics.append(
+                    _record_rejection(
+                        result,
                         Diagnostic(
                             "warning",
                             "unsupported-definition",
@@ -1834,15 +1868,16 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
                             filename,
                             token.line,
                             token.column,
-                        )
+                            path="definitions",
+                        ),
                     )
-                    result.rejected_definitions += 1
                 continue
             extend = raw.get("extend")
             if isinstance(extend, list) and any(
                 item == {"__unsupported__": "array-item"} for item in extend
             ):
-                result.diagnostics.append(
+                _record_rejection(
+                    result,
                     Diagnostic(
                         "warning",
                         "unsupported-definition",
@@ -1851,9 +1886,8 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
                         token.line,
                         token.column,
                         path=_string(raw.get("model")),
-                    )
+                    ),
                 )
-                result.rejected_definitions += 1
                 continue
             device = _device(raw, token, filename, result.diagnostics)
             if device:
@@ -1869,6 +1903,7 @@ def parse_path(path: str | Path) -> ParseResult:
         combined.source_files += 1
         combined.devices.extend(result.devices)
         combined.diagnostics.extend(result.diagnostics)
+        combined.rejected_details.extend(result.rejected_details)
         combined.syntax_validated = combined.syntax_validated or result.syntax_validated
         combined.rejected_definitions += result.rejected_definitions
     return combined

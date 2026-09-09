@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from zha_z2m_converters.coverage import build_report, format_report
-from zha_z2m_converters.parser import parse_path
+from zha_z2m_converters.parser import parse_path, parse_source
 
 
 class CoverageTests(unittest.TestCase):
@@ -85,6 +85,19 @@ class CoverageTests(unittest.TestCase):
 
         text = format_report(build_report(parse_source(source, "macro_device.ts")))
         self.assertIn("unsupported extend macro: unknownMacro", text)
+
+    def test_report_lists_rejected_definition_details(self) -> None:
+        source = """
+        export const definitions = [
+            {model: "Before", vendor: "Example"},
+            {model: "Unsupported", vendor: "Example", extend: [unsupportedFactory().unsupported]},
+        ];
+        """
+        report = build_report(parse_source(source, "rejected.ts"))
+        text = format_report(report)
+        self.assertIn("Rejected definitions:", text)
+        self.assertIn("Unsupported (rejected.ts:", text)
+        self.assertEqual(report.to_dict()["rejected_definitions"][0]["path"], "Unsupported")
 
     def test_modern_extend_fixture_is_fully_supported(self) -> None:
         fixture = Path(__file__).parent / "fixtures" / "modern_extend.ts"

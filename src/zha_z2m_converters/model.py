@@ -115,6 +115,7 @@ class DeviceDefinition:
 class ParseResult:
     devices: list[DeviceDefinition] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    rejected_details: list[Diagnostic] = field(default_factory=list)
     syntax_validated: bool = False
     source_files: int = 0
     rejected_definitions: int = 0
@@ -129,6 +130,7 @@ class ParseResult:
             "syntax_validated": self.syntax_validated,
             "source_files": self.source_files,
             "rejected_definitions": self.rejected_definitions,
+            "rejected_details": [asdict(item) for item in self.rejected_details],
             "devices": [device.to_dict() for device in self.devices],
             "diagnostics": [asdict(item) for item in self.diagnostics],
         }

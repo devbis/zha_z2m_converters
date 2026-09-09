@@ -44,13 +44,27 @@ class ParserTests(unittest.TestCase):
         source = """
         export const definitions = [
             {model: "Before", vendor: "Example"},
-            {model: "Unsupported", vendor: "Example", extend: [modernExtend.illuminance({scale: (value) => value})]},
+            {model: "Unsupported", vendor: "Example", extend: [unsupportedFactory().unsupported]},
             {model: "After", vendor: "Example"},
         ];
         """
         result = parse_source(source, "partial-array.ts")
         self.assertEqual([device.model for device in result.devices], ["Before", "After"])
         self.assertEqual(result.rejected_definitions, 1)
+        self.assertEqual(result.rejected_details[0].path, "Unsupported")
+
+    def test_identity_scale_is_declarative(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Identity scale",
+            vendor: "Example",
+            extend: [modernExtend.illuminance({scale: (value) => value})],
+        }];
+        """
+        result = parse_source(source, "identity-scale.ts")
+        self.assertEqual(len(result.devices), 1)
+        self.assertEqual(result.rejected_definitions, 0)
+        self.assertFalse(result.devices[0].partial)
 
     def test_static_definition_becomes_ir(self) -> None:
         source = (ROOT / "fixtures" / "simple_device.ts").read_text()
