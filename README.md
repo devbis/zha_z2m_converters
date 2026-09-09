@@ -1,57 +1,109 @@
 # zha-z2m-converters
 
-Safe declarative bridge between `zigbee-herdsman-converters` and ZHA.
+`zha-z2m-converters` is a safe, declarative bridge between
+[zigbee-herdsman-converters](https://github.com/Koenkk/zigbee-herdsman-converters)
+and Home Assistant ZHA.
 
-The package does not execute JavaScript. It statically parses the supported
-part of TypeScript definitions, builds its own IR, and can export it as a
-regular Python module for ZHA.
+It reads a fresh converter snapshot, extracts the supported static parts, and
+turns them into Python-side ZHA definitions. It does not execute JavaScript or
+TypeScript and does not require V8, Node.js, or another JavaScript runtime.
+
+## Current coverage
+
+Coverage is measured against the converter snapshot in `vendor/`. The numbers
+below are the current baseline and can change when the snapshot is updated.
+
+| Status | Definitions | Share | Meaning |
+|:---:|---:|---:|---|
+| ✅ Fully supported | **2,347** | **52.4%** | Static definition and all extracted features are supported. |
+| 🟡 Usable partial | **1,810** | **40.4%** | Some features are missing, but at least one reliable data path remains. |
+| 🟠 Metadata only | **10** | **0.2%** | Device metadata was recovered, but no usable entity or data binding exists. |
+| 🔴 Unusable partial | **307** | **6.9%** | The remaining functionality depends on unsupported converter logic or has no usable data path. |
+| ⛔ Rejected | **4** | **0.1%** | The definition could not be recovered by the static parser. |
+| **Total** | **4,478** | **100%** | All definitions found in the snapshot, including rejected definitions. |
+
+### At a glance
+
+- **4,157 definitions (92.8%)** have either full support or at least one usable
+  supported data path.
+- **317 definitions** still need additional implementation or have no usable
+  entity path (`metadata-only` + `unusable partial`).
+- **4 definitions** are currently rejected by the parser.
+
+Run the report yourself:
+
+```shell
+python3 scripts/coverage.py
+python3 scripts/coverage.py --problem-limit 10
+python3 scripts/coverage.py --json > coverage.json
+```
+
+The report also lists unsupported extend macros, converter bindings, definition
+fields, and device-level problems. `--problem-limit 0` prints every problem
+entry.
+
+## Design goals
+
+- Use declarative converter data wherever possible.
+- Never execute JavaScript or TypeScript from a device definition.
+- Keep unsupported behavior visible instead of silently pretending it works.
+- Generate normal Python/ZHA runtime objects without a JavaScript engine.
+- Make it possible to add small, auditable macros without adding arbitrary code
+  execution.
+
+The project is intentionally not a JavaScript compatibility layer. Dynamic
+callbacks and device-specific executable converter code remain partial until
+they can be represented safely as data or a constrained macro.
 
 ## Quick start
 
 ```python
-from zha_z2m_converters import load_source, parse_source, export_python
+from zha_z2m_converters import export_python, load_source, parse_source
 
 source = load_source("vendor/zigbee-herdsman-converters")
 result = parse_source(source.text, source.filename)
+
 print(result.devices)
 print(result.diagnostics)
 export_python(result.devices, "generated/converters.py")
 ```
 
-Install the optional dependency to enable AST validation for real TypeScript:
+Install the optional TypeScript parser for AST validation:
 
 ```shell
 pip install -e '.[parser]'
 ```
 
-Without `tree-sitter`, the package still supports the limited declarative
-subset through its built-in static parser. No code path executes JavaScript.
+The built-in parser still supports the safe declarative subset when the
+optional `tree-sitter` dependency is not installed.
 
-## Coverage report
+## Supported declarative features
 
-Run the report against the pinned upstream snapshot:
+The supported subset currently includes:
 
-```shell
-python3 scripts/coverage.py
-python3 scripts/coverage.py --json > coverage.json
-```
+- standard ZHA cluster bindings for common sensors, switches, lights, and
+  electrical measurements;
+- static device fingerprints and Tuya fingerprints;
+- static `tuya.whitelabel(...)` manufacturer aliases;
+- `tuyaBase({dp: true})` and common Tuya datapoint macros:
+  `dpOnOff`, `dpBinary`, `dpNumeric`, and `dpEnumLookup`;
+- simple Tuya datapoint sensor and action wrappers;
+- `tuyaBase({queryOnConfigure: true})`;
+- `tuyaBase({bindBasicOnConfigure: true})`;
+- `tuya.configureMagicPacket`, `tuya.configureQuery`, and
+  `tuya.configureBindBasic` as declarative configure actions;
+- safe static configure actions such as endpoint binds, attribute reads,
+  reporting configuration, and whitelisted commands;
+- `tuyaOnOff` and the declarative `onOffCountdown` plan;
+- declarative `lumiZigbeeOTA` endpoint support.
 
-The report shows source files, total definitions, discovered definitions,
-fully supported definitions, partial definitions, and rejected definitions.
-Partial definitions are split into `Usable partial` and `Unusable partial`:
-the latter have no reliable supported data path after static extraction. For
-example, a device whose readings depend entirely on an unsupported custom
-datapoint converter is not counted as usable merely because some metadata or
-exposes were recovered. `Rejected` is reserved for definitions that could not
-be recovered by the parser at all. Use `--problem-limit` to control how many
-device-level problem entries are printed. Unsupported executable fields such
-as `configure` are retained as partial definitions when their static metadata
-can still be recovered; they are never executed.
+Unsupported dynamic expressions, custom JavaScript converters, and complex
+custom clusters are retained as partial definitions and are never evaluated.
 
 ## Runtime binding plan
 
-The runtime layer can build a controller-independent plan for basic ZHA
-bindings and process reports without a JavaScript runtime:
+The runtime layer builds a controller-independent plan for basic ZHA bindings
+and processes reports without a JavaScript runtime:
 
 ```python
 from zha_z2m_converters import RuntimeReport, apply_report, build_runtime_plan, make_write
@@ -61,58 +113,20 @@ state = apply_report(plan, RuntimeReport("temperature_measurement", "measured_va
 write = make_write(plan, "state", True)
 ```
 
-The current plan covers standard temperature, humidity, pressure, battery,
-occupancy, on/off attribute mappings, and the declarative Tuya datapoint
-subset. `register_with_zha` uses the same plan when adapting entities to the
-installed ZHA `QuirkBuilder`.
-
-Static device fingerprints such as `tuya.fingerprint("TS0001", ["_TZ..."])`
-are preserved in the IR. The ZHA adapter registers one builder signature per
-fingerprint, so vendor-specific manufacturer names and model IDs can match
-without executing the converter module.
-
-Direct fingerprint helpers and static `tuya.whitelabel(...)` manufacturer
-aliases are also converted to exact ZHA signatures. This is important for
-devices such as `Zbeacon / TS011F`: once the integration is filtered to that
-manufacturer and model, its generated v2 quirk is registered for the exact
-signature and takes precedence over a generic built-in model-only quirk.
-
-Simple declarative configure callbacks are also represented in the plan. The
-initial whitelist includes endpoint-to-coordinator cluster binds written as
-`device.getEndpoint(1).bind(coordinatorEndpoint, "hvacThermostat")` or
-`reporting.bind(endpoint, coordinatorEndpoint, ["genPowerCfg"])`, endpoint
-attribute reads, static `endpoint.configureReporting(...)` payloads, and common
-static reporting helpers such as `reporting.temperature(endpoint)`. Static
-`endpoint.command(cluster, command, payload)` calls and the Tuya helpers
-`configureQuery` and `configureBindBasic` are also represented as declarative
-actions. Local constant arrays and indexed endpoint access are resolved without
-evaluating expressions. Other callback statements remain marked as partial and
-are never executed.
-
-The safe Tuya subset currently includes `tuyaBase()` with its static `dp`
-option, `dpOnOff`, `dpBinary`, `dpNumeric`, and `dpEnumLookup`, plus the
-simple sensor/action wrappers built on them. They are supported when their
-datapoint, type, lookup, and scalar or four-number range scale are static.
-These macros become
-declarative bindings for the Tuya MCU `dpValues` attribute; reports and writes
-are represented by Python data, and the ZHA adapter creates a Python-only
-`TuyaMCUCluster` subclass for those bindings. Dynamic skips, callbacks, and
-other executable converter logic remain partial.
-
-The subset also includes standard `tuyaOnOff()` switch bindings, static Tuya
-fingerprints, `tuya.configureMagicPacket` as a `genBasic` read plan, and the
-declarative `onOffCountdown` report/command plan. `RuntimeWrite` represents
-`genOnOff.onWithTimedOff` as a command with an explicit payload. The ZHA
-adapter installs a small Python-only custom cluster so the countdown number
-entity can use the standard `number()` builder API while translating writes
-to that command. Other device-specific features that require custom converter
-behavior remain explicitly partial.
+`register_with_zha` adapts the same plan to the installed Home Assistant ZHA
+`QuirkBuilder`. Fingerprints are registered as exact manufacturer/model
+signatures, which allows vendor-specific definitions to take precedence over
+generic built-in quirks.
 
 ## Home Assistant installation
 
-The package can run as a Home Assistant custom integration. Copy the package
-to `custom_components/zha_z2m_converters`, copy a converter snapshot to a readable path,
-and add a YAML entry before starting Home Assistant:
+Copy the package to:
+
+```text
+config/custom_components/zha_z2m_converters
+```
+
+Copy a converter snapshot to a readable path, then configure the integration:
 
 ```yaml
 zha_z2m_converters:
@@ -124,13 +138,27 @@ zha_z2m_converters:
       model: TS011F
 ```
 
-The optional `devices` list is useful while validating selected devices. Each
-entry may specify a manufacturer, a model, or both. Multiple entries are
-combined. If `devices` is omitted, every definition from the selected source
-file or directory is registered.
-The integration registers definitions through the installed ZHA
-`QuirkBuilder`; it does not run TypeScript or JavaScript.
+The `devices` list is optional and is useful while validating selected devices.
+Each entry may specify a manufacturer, a model, or both. If it is omitted, all
+definitions from the selected source file or directory are registered.
 
-For standard electrical measurement clusters, the adapter keeps ZHA's native
-measurement entities instead of creating duplicate converter entities. This
-allows the device's native scaling and reporting behavior to remain visible.
+The integration creates Python-side ZHA quirks through the installed
+`QuirkBuilder`. It does not run TypeScript or JavaScript.
+
+## Testing
+
+Run the complete test suite with:
+
+```shell
+PYTHONPATH=src python3 -m unittest discover -s tests -q
+```
+
+Run the coverage report against the bundled converter snapshot with:
+
+```shell
+python3 scripts/coverage.py --problem-limit 10
+```
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
