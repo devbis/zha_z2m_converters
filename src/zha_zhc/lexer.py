@@ -87,7 +87,12 @@ def tokenize(text: str) -> list[Token]:
             continue
         start_line, start_column = line, column
         two = text[i : i + 2]
-        if two in ("=>", "==", "!=", "&&", "||", "?."):
+        three = text[i : i + 3]
+        if three in ("===", "!=="):
+            tokens.append(Token("operator", three, i, line, column))
+            i += 3
+            advance(three)
+        elif two in ("=>", "==", "!=", "&&", "||", "?."):
             tokens.append(Token("operator", two, i, line, column))
             i += 2
             advance(two)

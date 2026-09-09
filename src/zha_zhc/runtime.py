@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import IntEnum
 import logging
 from typing import Any
 
@@ -60,6 +61,9 @@ ZHA_ATTRIBUTE_NAMES: dict[str, str] = {
     "onTime": "on_time",
     "moesStartUpOnOff": "moes_start_up_on_off",
     "switchType": "switch_type",
+    "tuyaBacklightMode": "tuya_backlight_mode",
+    "tuyaBacklightSwitch": "tuya_backlight_switch",
+    "childLock": "child_lock",
 }
 
 
@@ -113,9 +117,53 @@ class RuntimeRegistry:
         self.devices.append(normalize_device(device))
 
 
-def build_runtime_plan(device: DeviceDefinition) -> RuntimePlan:
+def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None = None) -> RuntimePlan:
     """Build a controller-independent plan for reports and writes."""
-    normalized = normalize_device(device)
+    source = device
+    if manufacturer_name is not None and device.conditional_extends:
+        from .parser import _modern_extend, predicate_matches
+
+        exposes = list(device.exposes)
+        from_zigbee = list(device.from_zigbee)
+        for conditional in device.conditional_extends:
+            if not predicate_matches(conditional.get("predicate"), manufacturer_name):
+                continue
+            call = conditional.get("call")
+            option = conditional.get("option")
+            if not isinstance(call, dict) or not isinstance(option, str):
+                continue
+            args = call.get("args")
+            if not isinstance(args, list) or not args or not isinstance(args[0], dict):
+                continue
+            # Expand only the selected option. Reusing the complete original
+            # argument object would also regenerate the base switch,
+            # measurements, and every other conditional feature once per
+            # predicate.
+            conditional_call = {**call, "args": [{option: True}]}
+            generated_exposes, generated_from, _, supported = _modern_extend(conditional_call)
+            if supported:
+                expose_names = {
+                    "powerOutageMemory": "power_outage_memory",
+                    "indicatorMode": "indicator_mode",
+                    "childLock": "child_lock",
+                    "onOffCountdown": "countdown",
+                    "switchTypeButton": "switch_type_button",
+                }
+                binding_names = {
+                    "powerOutageMemory": "power_outage_memory",
+                    "indicatorMode": "indicator_mode",
+                    "childLock": "child_lock",
+                    "onOffCountdown": "on_off_countdown",
+                    "switchTypeButton": "switch_type_button",
+                }
+                expose_name = expose_names.get(option)
+                binding_name = binding_names.get(option)
+                if expose_name is None or binding_name is None:
+                    continue
+                exposes.extend(item for item in generated_exposes if item.name == expose_name)
+                from_zigbee.extend(item for item in generated_from if item.converter == binding_name)
+        source = replace(device, exposes=exposes, from_zigbee=from_zigbee)
+    normalized = normalize_device(source)
     entities = []
     for expose in normalized.exposes:
         binding = _binding_for_expose(expose, normalized.from_zigbee)
@@ -415,13 +463,13 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
         if not device.manufacturer or not device.model:
             continue
         signatures = device.fingerprints or [{"manufacturerName": device.manufacturer, "modelID": device.model}]
-        plan = build_runtime_plan(device)
         for signature in signatures:
+            plan = build_runtime_plan(device, signature.get("manufacturerName"))
             builder = builder_factory(signature["manufacturerName"], signature["modelID"])
             _prevent_unrepresented_default_entities(builder, plan)
             _configure_builder_device_class(builder, plan.configure_actions)
             custom_clusters_ready = _configure_custom_clusters(builder, plan)
-            for expose, entity in zip(device.exposes, plan.entities, strict=False):
+            for expose, entity in zip(plan.device.exposes, plan.entities, strict=False):
                 if _is_default_measurement_entity(entity):
                     continue
                 if _requires_custom_cluster(plan, entity) and not custom_clusters_ready:
@@ -474,6 +522,15 @@ def _prevent_unrepresented_default_entities(builder: Any, plan: RuntimePlan) -> 
         if cluster_id in represented_clusters:
             continue
         prevent(cluster_id=cluster_id)
+    if 0x0B04 in represented_clusters and not any(
+        _cluster_id(entity.cluster) == 0x0B04 and entity.attribute in {"powerFactor", "power_factor"}
+        for entity in plan.entities
+    ):
+        prevent(
+            endpoint_id=1,
+            cluster_id=0x0B04,
+            unique_id_suffix="2820-power_factor",
+        )
 
 
 def _cluster_id(cluster: str | int | None) -> int | None:
@@ -610,18 +667,22 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
         "power": "sensor",
         "energy": "sensor",
     }.get(expose.type, expose.type)
+    # A writable binary expose represents a controllable boolean value in
+    # Home Assistant. Read-only binary exposes remain binary sensors.
+    if expose.type == "binary" and "set" in expose.access:
+        method_name = "switch"
     method = getattr(builder, method_name, None)
     if not callable(method):
-        return
-    if method_name == "enum":
-        # QuirkBuilder's enum API requires a Python Enum class. The portable
-        # IR keeps enum values, but generating a class from arbitrary source
-        # metadata is not safe or useful for this initial adapter.
         return
     kwargs = {"fallback_name": expose.name}
     # Recent QuirkBuilder releases require either a device class or a
     # translation key for entity metadata. A static expose name is safe here.
     kwargs["translation_key"] = expose.name
+    if method_name == "enum":
+        enum_class = _make_enum_class(expose)
+        if enum_class is None:
+            return
+        kwargs["enum_class"] = enum_class
     if entity.attribute is not None:
         kwargs["attribute_name"] = (
             f"dp_{entity.dp}"
@@ -656,6 +717,24 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
             method(attribute_name, cluster_id, **kwargs)
 
 
+def _make_enum_class(expose: Expose) -> type[IntEnum] | None:
+    """Build a numeric Python enum from static converter values."""
+    if not expose.values:
+        return None
+    members: dict[str, int] = {}
+    for index, value in enumerate(expose.values):
+        if not isinstance(value, str):
+            return None
+        name = "".join(character if character.isalnum() else "_" for character in value).upper()
+        name = name.strip("_") or f"VALUE_{index}"
+        if name[0].isdigit():
+            name = f"VALUE_{name}"
+        while name in members:
+            name = f"{name}_{index}"
+        members[name] = index
+    return IntEnum(f"ZhaZhc_{expose.name}", members)
+
+
 def _is_command_backed(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
     return entity.property == "countdown" and any(
         binding.converter == "on_off_countdown"
@@ -671,7 +750,13 @@ def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
         for binding in plan.bindings
     ) or (
         entity.cluster in {"genOnOff", "manuSpecificTuya3"}
-        and entity.attribute in {"moesStartUpOnOff", "powerOnBehavior", "switchType"}
+        and entity.attribute in {
+            "moesStartUpOnOff",
+            "powerOnBehavior",
+            "switchType",
+            "tuyaBacklightMode",
+            "childLock",
+        }
     )
 
 
@@ -728,7 +813,10 @@ def _tuya_on_off_cluster() -> Any:
 
     class TuyaOnOffCluster(OnOff, CustomCluster):
         class AttributeDefs(OnOff.AttributeDefs):
+            child_lock = ZCLAttributeDef(id=0x8000, type=t.Bool, access="rw")
+            tuya_backlight_mode = ZCLAttributeDef(id=0x8001, type=t.enum8, access="rw")
             moes_start_up_on_off = ZCLAttributeDef(id=0x8002, type=t.enum8, access="rw")
+            tuya_backlight_switch = ZCLAttributeDef(id=0x5000, type=t.enum8, access="rw")
 
         async def write_attributes(self, attributes: dict[Any, Any], *args: Any, **kwargs: Any) -> Any:
             on_time = OnOff.AttributeDefs.on_time

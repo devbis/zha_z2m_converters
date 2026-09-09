@@ -10,10 +10,10 @@ from zha_zhc.exporter import export_python
 from zha_zhc import _select_devices
 from zha_zhc.mapping import normalize_device
 from zha_zhc.parser import parse_path, parse_source
-from zha_zhc.model import ConfigureAction
-from zha_zhc.runtime import _apply_configure_actions
+from zha_zhc.model import ConfigureAction, Expose
+from zha_zhc.runtime import _apply_configure_actions, _apply_expose, _make_enum_class
 from zha_zhc.runtime import apply_report, build_runtime_plan, make_write, register_result
-from zha_zhc.runtime import register_with_zha, RuntimeReport
+from zha_zhc.runtime import register_with_zha, RuntimeEntity, RuntimeReport
 
 
 ROOT = Path(__file__).parent
@@ -205,7 +205,7 @@ class ParserTests(unittest.TestCase):
             exposes: [{type: "power", name: "power", property: "power", unit: "W"}],
         }];
         """
-        prevented_clusters = []
+        prevented = []
 
         class Builder:
             def __init__(self, vendor, model):
@@ -215,13 +215,14 @@ class ParserTests(unittest.TestCase):
                 self.sensor_kwargs = kwargs
 
             def prevent_default_entity_creation(self, **kwargs):
-                prevented_clusters.append(kwargs["cluster_id"])
+                prevented.append(kwargs)
 
             def add_to_registry(self):
                 pass
 
         register_with_zha(register_result(parse_source(source)), Builder)
-        self.assertEqual(prevented_clusters, [0x0702])
+        self.assertEqual([item["cluster_id"] for item in prevented], [0x0702, 0x0B04])
+        self.assertEqual(prevented[-1]["unique_id_suffix"], "2820-power_factor")
 
     def test_standard_measurement_entities_are_not_duplicated(self) -> None:
         source = """
@@ -452,6 +453,67 @@ class ParserTests(unittest.TestCase):
         plan = build_runtime_plan(device)
         self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya3", "powerOnBehavior", 2)), {"power_on_behavior": "previous"})
         self.assertEqual(apply_report(plan, RuntimeReport("haElectricalMeasurement", "activePower", 42)), {"power": 42})
+
+    def test_tuya_on_off_conditional_options_are_expanded_per_fingerprint(self) -> None:
+        source = (ROOT.parent / "vendor" / "zigbee-herdsman-converters" / "src" / "devices" / "tuya.ts").read_text()
+        result = parse_source(source, "tuya.ts")
+        device = next(item for item in result.devices if item.model == "TS011F_plug_1")
+        self.assertEqual(device.unsupported_fields, ["configure"])
+        self.assertEqual(len(device.conditional_extends), 5)
+
+        zbeacon = build_runtime_plan(device, "Zbeacon")
+        self.assertEqual(
+            [item.name for item in zbeacon.device.exposes],
+            [
+                "state",
+                "power",
+                "current",
+                "voltage",
+                "energy",
+                "power_outage_memory",
+                "indicator_mode",
+                "child_lock",
+                "countdown",
+                "switch_type_button",
+            ],
+        )
+        self.assertEqual(
+            apply_report(zbeacon, RuntimeReport("genOnOff", "tuyaBacklightMode", 2)),
+            {"indicator_mode": "on/off"},
+        )
+        self.assertEqual(
+            apply_report(zbeacon, RuntimeReport("genOnOff", "childLock", True)),
+            {"child_lock": "LOCK"},
+        )
+
+        green_sun = build_runtime_plan(device, "_TZ3000_cicwjqth")
+        self.assertNotIn("power_outage_memory", [item.name for item in green_sun.device.exposes])
+        self.assertNotIn("child_lock", [item.name for item in green_sun.device.exposes])
+        self.assertNotIn("countdown", [item.name for item in green_sun.device.exposes])
+
+    def test_writable_binary_expose_is_registered_as_switch(self) -> None:
+        calls = []
+
+        class Builder:
+            def switch(self, **kwargs):
+                calls.append(("switch", kwargs))
+
+            def binary_sensor(self, **kwargs):
+                calls.append(("binary_sensor", kwargs))
+
+        _apply_expose(
+            Builder(),
+            Expose("binary", "child_lock", "child_lock", ("state", "set")),
+            RuntimeEntity("child_lock", "binary", "child_lock", "genOnOff", "childLock", access=("state", "set")),
+        )
+        self.assertEqual([name for name, _ in calls], ["switch"])
+
+    def test_enum_expose_uses_integer_values_for_zha_select(self) -> None:
+        enum_class = _make_enum_class(
+            Expose("enum", "power_outage_memory", values=("off", "previous", "on"))
+        )
+        self.assertIsNotNone(enum_class)
+        self.assertEqual(int(enum_class.PREVIOUS), 1)
 
     def test_vendor_light_aliases_use_safe_light_expansion(self) -> None:
         source = """

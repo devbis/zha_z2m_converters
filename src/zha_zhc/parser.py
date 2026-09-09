@@ -39,6 +39,8 @@ class _ObjectParser:
 
     def parse_value(self) -> Any:
         token = self.current()
+        if self.looks_like_predicate():
+            return self.parse_predicate()
         if token.value == "{":
             return self.parse_object()
         if token.value == "[":
@@ -119,6 +121,72 @@ class _ObjectParser:
                 return self.constants[name]
             return {"__identifier__": ".".join(parts)}
         raise UnsupportedSyntax(f"unsupported value {token.value!r}")
+
+    def looks_like_predicate(self) -> bool:
+        """Recognize a one-argument arrow predicate without evaluating it."""
+        if self.current().kind == "identifier" and self.index + 1 < len(self.tokens):
+            return self.tokens[self.index + 1].value == "=>"
+        if self.current().value != "(":
+            return False
+        depth = 0
+        index = self.index
+        while index < len(self.tokens):
+            value = self.tokens[index].value
+            if value == "(":
+                depth += 1
+            elif value == ")":
+                depth -= 1
+                if depth == 0:
+                    return index + 1 < len(self.tokens) and self.tokens[index + 1].value == "=>"
+            index += 1
+        return False
+
+    def parse_predicate(self) -> dict[str, Any]:
+        """Parse the small declarative predicate subset used by modernExtend."""
+        if self.current().value == "(":
+            self.take("(")
+            parameter = self.take()
+            if parameter.kind != "identifier" or self.current().value != ")":
+                raise UnsupportedSyntax("predicate must have one parameter")
+            self.take(")")
+        else:
+            parameter = self.take()
+            if parameter.kind != "identifier":
+                raise UnsupportedSyntax("predicate parameter must be an identifier")
+        self.take("=>")
+
+        if self.current().value == "!":
+            self.take("!")
+            values = self.parse_value()
+            if self.current().value != ".":
+                raise UnsupportedSyntax("predicate requires a static includes call")
+            self.take(".")
+            if self.take().value != "includes" or self.current().value != "(":
+                raise UnsupportedSyntax("predicate requires a static includes call")
+            self.take("(")
+            argument = self.take()
+            if argument.kind != "identifier" or argument.value != parameter.value:
+                raise UnsupportedSyntax("predicate includes argument must match its parameter")
+            self.take(")")
+            if not isinstance(values, list) or not all(isinstance(item, (str, int, float, bool)) for item in values):
+                raise UnsupportedSyntax("predicate includes list must be static")
+            return {"__predicate__": {"op": "not_in", "values": values}}
+
+        argument = self.take()
+        if argument.kind != "identifier" or argument.value != parameter.value:
+            raise UnsupportedSyntax("predicate comparison must use its parameter")
+        operator = self.take().value
+        if operator not in {"==", "===", "!=", "!=="}:
+            raise UnsupportedSyntax("unsupported predicate operator")
+        expected = self.parse_value()
+        if not isinstance(expected, (str, int, float, bool)):
+            raise UnsupportedSyntax("predicate comparison value must be static")
+        return {
+            "__predicate__": {
+                "op": "equals" if operator in {"==", "==="} else "not_equals",
+                "value": expected,
+            }
+        }
 
     def parse_call_args(self) -> list[Any]:
         self.take("(")
@@ -546,6 +614,25 @@ def _call_args(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _is_predicate(value: Any) -> bool:
+    return isinstance(value, dict) and set(value) == {"__predicate__"} and isinstance(value["__predicate__"], dict)
+
+
+def predicate_matches(value: Any, manufacturer_name: str | None) -> bool:
+    """Evaluate only the parser's data-only predicate representation."""
+    if manufacturer_name is None or not _is_predicate(value):
+        return False
+    predicate = value["__predicate__"]
+    if predicate.get("op") == "equals":
+        return manufacturer_name == predicate.get("value")
+    if predicate.get("op") == "not_equals":
+        return manufacturer_name != predicate.get("value")
+    if predicate.get("op") == "not_in":
+        values = predicate.get("values")
+        return isinstance(values, list) and manufacturer_name not in values
+    return False
+
+
 def _tuya_dp_type(value: Any) -> str | None:
     type_name = _static_text(value)
     if type_name in {"raw", "bool", "number", "string", "enum", "bitmap"}:
@@ -810,6 +897,10 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
             "powerOutageMemory",
             "powerOnBehavior2",
             "electricalMeasurements",
+            "electricalMeasurementsFzConverter",
+            "indicatorMode",
+            "childLock",
+            "switchTypeButton",
         }
         unsupported_options = set(args) - supported_options
         bindings = [Binding("on_off", "genOnOff", "onOff", direction="report")]
@@ -834,7 +925,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("on_off_countdown", "genOnOff", command="onWithTimedOff", direction="command"),
                 ]
             )
-        elif "onOffCountdown" in args:
+        elif "onOffCountdown" in args and not _is_predicate(args["onOffCountdown"]):
             unsupported_options.add("onOffCountdown")
         if args.get("switchType") is True:
             exposes.append(
@@ -892,7 +983,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("power_outage_memory", "genOnOff", "moesStartUpOnOff", direction="command", expression=power_outage_expression),
                 ]
             )
-        elif "powerOnBehavior3" not in args:
+        elif not _is_predicate(args.get("powerOutageMemory")) and "powerOnBehavior3" not in args:
             exposes.append(
                 Expose(
                     "enum",
@@ -929,12 +1020,68 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding(name, "seMetering", "currentSummDelivered", direction="report"),
                 ]
             )
+        if args.get("indicatorMode") is True:
+            exposes.append(
+                Expose(
+                    "enum",
+                    "indicator_mode",
+                    "indicator_mode",
+                    ("state", "set"),
+                    values=("off", "off/on", "on/off", "on"),
+                    category="config",
+                )
+            )
+            indicator_expression = Expression("lookup", ({"0": "off", "1": "off/on", "2": "on/off", "3": "on"},))
+            bindings.extend(
+                [
+                    Binding("indicator_mode", "genOnOff", "tuyaBacklightMode", direction="report", expression=indicator_expression),
+                    Binding("indicator_mode", "genOnOff", "tuyaBacklightMode", direction="command", expression=indicator_expression),
+                ]
+            )
+        if args.get("childLock") is True:
+            exposes.append(Expose("binary", "child_lock", "child_lock", ("state", "set"), category="config"))
+            child_lock_expression = Expression("lookup", ({"True": "LOCK", "False": "UNLOCK", "1": "LOCK", "0": "UNLOCK"},))
+            bindings.extend(
+                [
+                    Binding("child_lock", "genOnOff", "childLock", direction="report", expression=child_lock_expression),
+                    Binding("child_lock", "genOnOff", "childLock", direction="command", expression=child_lock_expression),
+                ]
+            )
+        if args.get("switchTypeButton") is True:
+            exposes.append(
+                Expose(
+                    "enum",
+                    "switch_type_button",
+                    "switch_type_button",
+                    ("state", "set"),
+                    values=("release", "press"),
+                    category="config",
+                )
+            )
+            switch_button_expression = Expression("lookup", ({"0": "release", "1": "press"},))
+            bindings.extend(
+                [
+                    Binding("switch_type_button", "manuSpecificTuya3", "switchType", direction="report", expression=switch_button_expression),
+                    Binding("switch_type_button", "manuSpecificTuya3", "switchType", direction="command", expression=switch_button_expression),
+                ]
+            )
         for option in ("switchType", "onOffCountdown"):
-            if option in args and args[option] is not True:
+            if option in args and args[option] is not True and not _is_predicate(args[option]):
                 unsupported_options.add(option)
-        for option in ("powerOutageMemory", "powerOnBehavior2", "electricalMeasurements"):
-            if option in args and args[option] is not True:
+        for option in (
+            "powerOutageMemory",
+            "powerOnBehavior2",
+            "electricalMeasurements",
+            "indicatorMode",
+            "childLock",
+            "switchTypeButton",
+        ):
+            if option in args and args[option] is not True and not _is_predicate(args[option]):
                 unsupported_options.add(option)
+        if "electricalMeasurementsFzConverter" in args:
+            converter = _call_name(args["electricalMeasurementsFzConverter"])
+            if converter != "tuya.fz.TS011F_electrical_measurement":
+                unsupported_options.add("electricalMeasurementsFzConverter")
         return exposes, bindings, name, not unsupported_options
     if name == "battery":
         exposes = []
@@ -1449,6 +1596,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
     configure_actions, configure_unsupported = _configure_actions(raw.get("configure"))
     extends: list[str] = []
     unsupported_macros: list[str] = []
+    conditional_extends: list[dict[str, Any]] = []
     dynamic_extend = False
     unsupported_fields = [
         str(key)
@@ -1462,6 +1610,11 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         if macro_name:
             extends.append(macro_name)
         generated_exposes, generated_from, name, supported = _modern_extend(item)
+        if name == "tuyaOnOff":
+            args = _call_args(item)
+            for option, value in args.items():
+                if _is_predicate(value):
+                    conditional_extends.append({"call": item, "option": option, "predicate": value})
         if name and not supported:
             unsupported_macros.append(name)
         if name == "electricityMeter":
@@ -1503,6 +1656,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         to_zigbee=to_zigbee,
         extends=extends,
         configure_actions=configure_actions,
+        conditional_extends=conditional_extends,
         unsupported_macros=unsupported_macros,
         unsupported_fields=unsupported_fields,
         source=filename,

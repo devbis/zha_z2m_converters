@@ -90,6 +90,7 @@ class DeviceDefinition:
     to_zigbee: list[Binding] = field(default_factory=list)
     extends: list[str] = field(default_factory=list)
     configure_actions: list[ConfigureAction] = field(default_factory=list)
+    conditional_extends: list[dict[str, Any]] = field(default_factory=list)
     unsupported_macros: list[str] = field(default_factory=list)
     unsupported_fields: list[str] = field(default_factory=list)
     source: str | None = None
