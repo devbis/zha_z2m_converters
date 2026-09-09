@@ -27,7 +27,7 @@ class Expression:
     args: tuple[Any, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {"op": self.op, "args": list(self.args)}
+        return {"op": self.op, "args": [arg.to_dict() if isinstance(arg, Expression) else arg for arg in self.args]}
 
 
 @dataclass(frozen=True)

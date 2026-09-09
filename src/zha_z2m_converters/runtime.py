@@ -5,10 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import IntEnum
 import logging
+import math
 from typing import Any
 
 from .mapping import normalize_device
-from .model import Binding, ConfigureAction, DeviceDefinition, Diagnostic, Expose, ParseResult
+from .model import Binding, ConfigureAction, DeviceDefinition, Diagnostic, Expose, Expression, ParseResult
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -329,6 +330,8 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
         "battery": "battery",
         "occupancy": "occupancy",
         "contact": "contact",
+        "co2": "co2",
+        "pm25": "pm25",
         "switch": "on_off",
         "light": "light",
     }.get(expose.type) or {
@@ -376,18 +379,31 @@ def _same_attribute(left: str | int | None, right: str | int | None) -> bool:
 
 
 def _apply_expression(value: Any, binding: Binding) -> Any:
-    if binding.expression is None:
+    return _evaluate_expression(value, binding.expression)
+
+
+def _evaluate_expression(value: Any, expression: Expression | None) -> Any:
+    if expression is None:
         return value
-    if binding.expression.op == "divide" and binding.expression.args:
-        divisor = binding.expression.args[0]
+    if expression.op == "floor":
+        if expression.args and isinstance(expression.args[0], Expression):
+            value = _evaluate_expression(value, expression.args[0])
+        if isinstance(value, (int, float)):
+            return math.floor(value)
+    if expression.op == "multiply" and expression.args:
+        factor = expression.args[0]
+        if isinstance(value, (int, float)) and isinstance(factor, (int, float)):
+            return value * factor
+    if expression.op == "divide" and expression.args:
+        divisor = expression.args[0]
         if isinstance(value, (int, float)) and isinstance(divisor, (int, float)) and divisor != 0:
             return value / divisor
-    if binding.expression.op == "map_range" and len(binding.expression.args) == 4:
-        raw_min, raw_max, exposed_min, exposed_max = binding.expression.args
+    if expression.op == "map_range" and len(expression.args) == 4:
+        raw_min, raw_max, exposed_min, exposed_max = expression.args
         if isinstance(value, (int, float)) and raw_max != raw_min:
             return exposed_min + (value - raw_min) * (exposed_max - exposed_min) / (raw_max - raw_min)
-    if binding.expression.op == "lookup" and binding.expression.args:
-        lookup = binding.expression.args[0]
+    if expression.op == "lookup" and expression.args:
+        lookup = expression.args[0]
         if isinstance(lookup, dict):
             return lookup.get(str(value), value)
     return value

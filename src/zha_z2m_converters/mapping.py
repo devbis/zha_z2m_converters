@@ -45,6 +45,8 @@ CONVERTER_MAP: dict[str, tuple[str, str | None, str]] = {
     "lumi_co2": ("msCO2", "measuredValue", "report"),
     "lumi_pm25": ("pm25Measurement", "measuredValue", "report"),
     "lumi_power": ("genAnalogInput", "presentValue", "report"),
+    "co2": ("msCO2", "measuredValue", "report"),
+    "pm25": ("pm25Measurement", "measuredValue", "report"),
     "device_temperature": ("genDeviceTempCfg", "currentTemperature", "report"),
     "thermostat": ("hvacThermostat", None, "report"),
     "thermostat_local_temperature": ("hvacThermostat", "localTemp", "report"),
@@ -159,6 +161,10 @@ def normalize_device(device: DeviceDefinition) -> DeviceDefinition:
             expression = Expression("divide", (scale,)) if scale else binding.expression
             if converter_name == "lumi_contact" and direction == "report":
                 expression = Expression("lookup", ({"0": True, "1": False},))
+            elif converter_name == "lumi_co2" and direction == "report":
+                expression = Expression("floor")
+            elif converter_name == "co2" and direction == "report":
+                expression = Expression("floor", (Expression("multiply", (1_000_000,)),))
             normalized_from.append(
                 replace(binding, cluster=cluster, attribute=attribute, direction=direction, expression=expression)
             )

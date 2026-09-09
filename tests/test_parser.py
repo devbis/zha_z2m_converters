@@ -161,7 +161,24 @@ class ParserTests(unittest.TestCase):
             ],
         )
         self.assertEqual(apply_report(plan, RuntimeReport("genOnOff", "onOff", 0)), {"contact": True})
-        self.assertEqual(apply_report(plan, RuntimeReport("msCO2", "measuredValue", 500)), {"co2": 500})
+        self.assertEqual(apply_report(plan, RuntimeReport("msCO2", "measuredValue", 500.9)), {"co2": 500})
+        self.assertEqual(apply_report(plan, RuntimeReport("pm25Measurement", "measuredValue", 12)), {"pm25": 12})
+
+    def test_standard_co2_and_pm25_converters_use_safe_expressions(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Standard air quality",
+            vendor: "Example",
+            fromZigbee: [fz.co2, fz.pm25],
+            exposes: [e.co2(), e.pm25()],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "standard-air-quality.ts").devices[0])
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute) for item in plan.entities],
+            [("co2", "msCO2", "measuredValue"), ("pm25", "pm25Measurement", "measuredValue")],
+        )
+        self.assertEqual(apply_report(plan, RuntimeReport("msCO2", "measuredValue", 0.0005019)), {"co2": 501})
         self.assertEqual(apply_report(plan, RuntimeReport("pm25Measurement", "measuredValue", 12)), {"pm25": 12})
 
     def test_standard_converter_aliases_are_normalized_to_zcl(self) -> None:
