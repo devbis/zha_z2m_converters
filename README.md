@@ -8,7 +8,7 @@ It reads a fresh converter snapshot, extracts the supported static parts, and
 turns them into Python-side ZHA definitions. It does not execute JavaScript or
 TypeScript and does not require V8, Node.js, or another JavaScript runtime.
 
-## Current coverage
+## Coverage
 
 Coverage is measured against the bundled converter snapshot in
 `custom_components/zha_z2m_converters/converters/`. The generated block below
@@ -33,39 +33,102 @@ is refreshed from the snapshot by `scripts/update_readme_coverage.py`.
 - **4 definitions** are currently rejected by the parser.
 <!-- coverage:end -->
 
-Update the generated coverage block manually:
+## Installation
 
-```shell
-python3 scripts/update_readme_coverage.py
+### HACS
+
+1. Open **HACS → Integrations** in Home Assistant.
+2. Search for **ZHA Z2M Converters** and install it.
+3. Restart Home Assistant.
+
+If the project is not available in the HACS index yet, add the GitHub
+repository as a custom HACS repository with category **Integration**, then
+install it and restart Home Assistant.
+
+### Basic configuration
+
+Add this single entry to `configuration.yaml`:
+
+```yaml
+zha_z2m_converters:
 ```
 
-To keep the block current before every commit, install the repository's
-pre-commit hook:
+Restart Home Assistant again. The integration will load all definitions from
+the converter snapshot bundled with the component.
 
-```shell
-pip install pre-commit
-pre-commit install
+## Configuration
+
+The default configuration is enough for normal use. Optional settings are
+available when testing selected devices or adding local converter definitions.
+
+### Select specific devices
+
+Use `devices` to register only selected definitions while validating a device:
+
+```yaml
+zha_z2m_converters:
+  devices:
+    - manufacturer: _TZ3000_46t1rvdu
+      model: TS0001
+    - manufacturer: Zbeacon
+      model: TS011F
 ```
 
-The hook checks the generated block and rejects a commit when the bundled
-snapshot or parser results have changed. Run the update command, stage
-`README.md`, and commit again. You can also check all files explicitly:
+Each selector may contain only `manufacturer`, only `model`, or both. If
+`devices` is omitted, all definitions from the selected source paths are
+registered.
 
-```shell
-pre-commit run --all-files
+### External converters
+
+Place user-provided TypeScript definitions in:
+
+```text
+<Home Assistant configuration directory>/external_converters/
 ```
 
-Run the report yourself:
+All `.ts` files in that directory are loaded together with the bundled
+snapshot. The path is resolved through Home Assistant's actual configuration
+directory and is not hardcoded to `/config`.
 
-```shell
-python3 scripts/coverage.py
-python3 scripts/coverage.py --problem-limit 10
-python3 scripts/coverage.py --json > coverage.json
+To use another location, set `external_source`:
+
+```yaml
+zha_z2m_converters:
+  external_source: /path/to/external_converters
 ```
 
-The report also lists unsupported extend macros, converter bindings, definition
-fields, and device-level problems. `--problem-limit 0` prints every problem
-entry.
+Relative paths are resolved from Home Assistant's configuration directory.
+The external directory is outside `custom_components`, so HACS updates do not
+modify user-provided converters.
+
+### Custom bundled source
+
+The bundled snapshot is used automatically. A different source directory can
+be selected with `source`:
+
+```yaml
+zha_z2m_converters:
+  source: /path/to/zigbee-herdsman-converters
+```
+
+The selected source must contain TypeScript converter files.
+
+## How it works
+
+The integration follows a small, safe pipeline:
+
+1. It reads the bundled converter snapshot and any configured external
+   converter files.
+2. It parses only the declarative subset into a Python intermediate
+   representation.
+3. It maps that representation to ZHA entities, clusters, fingerprints, and
+   configure actions.
+4. It registers the generated definitions with Home Assistant's ZHA runtime.
+
+JavaScript and TypeScript callbacks are never executed. Unsupported dynamic
+parts are reported in coverage results instead of being evaluated. This keeps
+the integration independent of Node.js and V8 while leaving room for future
+safe AST-based translations of small, explicitly supported code patterns.
 
 ## Design goals
 
@@ -73,14 +136,14 @@ entry.
 - Never execute JavaScript or TypeScript from a device definition.
 - Keep unsupported behavior visible instead of silently pretending it works.
 - Generate normal Python/ZHA runtime objects without a JavaScript engine.
-- Make it possible to add small, auditable macros without adding arbitrary code
-  execution.
+- Add small, auditable macros only when they can be represented safely as
+  data.
 
 The project is intentionally not a JavaScript compatibility layer. Dynamic
 callbacks and device-specific executable converter code remain partial until
 they can be represented safely as data or a constrained macro.
 
-## Quick start
+### Python API
 
 ```python
 from zha_z2m_converters import export_python, load_source, parse_source
@@ -104,7 +167,7 @@ pip install -e '.[parser]'
 The built-in parser still supports the safe declarative subset when the
 optional `tree-sitter` dependency is not installed.
 
-## Supported declarative features
+## Supported features
 
 The supported subset currently includes:
 
@@ -127,7 +190,7 @@ The supported subset currently includes:
 Unsupported dynamic expressions, custom JavaScript converters, and complex
 custom clusters are retained as partial definitions and are never evaluated.
 
-## Runtime binding plan
+## Runtime details
 
 The runtime layer builds a controller-independent plan for basic ZHA bindings
 and processes reports without a JavaScript runtime:
@@ -145,48 +208,7 @@ write = make_write(plan, "state", True)
 signatures, which allows vendor-specific definitions to take precedence over
 generic built-in quirks.
 
-## Home Assistant installation
-
-Copy the package to:
-
-```text
-config/custom_components/zha_z2m_converters
-```
-
-Copy a converter snapshot to a readable path, then configure the integration:
-
-```yaml
-zha_z2m_converters:
-  devices:
-    - manufacturer: _TZ3000_46t1rvdu
-      model: TS0001
-    - manufacturer: Zbeacon
-      model: TS011F
-```
-
-The bundled converter snapshot is installed with the integration and is used
-automatically when `source` is omitted. Additional
-user-provided TypeScript definitions can be placed in:
-
-```text
-<Home Assistant config directory>/external_converters/
-```
-
-All `.ts` files in that directory are loaded together with the bundled
-snapshot. The component resolves this path through Home Assistant's actual
-configuration directory, so it is not tied to `/config`. The directory is
-outside `custom_components`, so HACS updates do not modify it. A custom
-`external_source` path can be configured when user converters are stored
-elsewhere.
-
-The `devices` list is optional and is useful while validating selected devices.
-Each entry may specify a manufacturer, a model, or both. If it is omitted, all
-definitions from the selected source paths are registered.
-
-The integration creates Python-side ZHA quirks through the installed
-`QuirkBuilder`. It does not run TypeScript or JavaScript.
-
-## Testing
+## Testing and coverage reports
 
 Run the complete test suite with:
 
@@ -194,10 +216,43 @@ Run the complete test suite with:
 PYTHONPATH=custom_components python3 -m unittest discover -s tests -q
 ```
 
-Run the coverage report against the bundled converter snapshot with:
+Generate the device support report against the bundled converter snapshot:
+
+```shell
+python3 scripts/coverage.py
+```
+
+Show the first ten problems for investigation:
 
 ```shell
 python3 scripts/coverage.py --problem-limit 10
+```
+
+Export machine-readable results for automation:
+
+```shell
+python3 scripts/coverage.py --json > coverage.json
+```
+
+The report separates fully supported, usable partial, metadata-only,
+unusable partial, and rejected definitions. A partial definition may still be
+usable when at least one entity or data path was recovered; the problem list
+explains which features were not translated. Use `--problem-limit 0` to print
+all problems.
+
+The README coverage table is generated from the same report:
+
+```shell
+python3 scripts/update_readme_coverage.py
+```
+
+The repository pre-commit hook checks that the generated table is current.
+Install and run it with:
+
+```shell
+pip install pre-commit
+pre-commit install
+pre-commit run --all-files
 ```
 
 ## License
