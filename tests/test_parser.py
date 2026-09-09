@@ -265,6 +265,7 @@ class ParserTests(unittest.TestCase):
         device = result.devices[0]
         self.assertFalse(device.partial)
         self.assertEqual(device.unsupported_macros, [])
+        self.assertGreaterEqual(len(device.exposes), 3)
         self.assertIn("light", [item.type for item in device.exposes])
         self.assertIn("battery", [item.name for item in device.exposes])
         self.assertIn("lightingColorCtrl", [item.cluster for item in device.from_zigbee])
@@ -532,7 +533,53 @@ class ParserTests(unittest.TestCase):
         device = result.devices[0]
         self.assertFalse(device.partial)
         self.assertEqual(device.unsupported_macros, [])
-        self.assertGreaterEqual(len(device.exposes), 3)
+
+    def test_vendor_light_modern_extend_aliases_keep_static_features(self) -> None:
+        source = """
+        export const definitions = [
+            {
+                zigbeeModel: ["SENGLED"],
+                model: "SENGLED",
+                vendor: "Sengled",
+                extend: [sengledLight({colorTemp: {range: [154, 500]}, color: {modes: ["xy"]}})],
+            },
+            {
+                zigbeeModel: ["IKEA"],
+                model: "IKEA",
+                vendor: "IKEA",
+                extend: [ikeaLight({colorTemp: true})],
+            },
+            {
+                zigbeeModel: ["GLEDOPTO"],
+                model: "GLEDOPTO",
+                vendor: "Gledopto",
+                extend: [gledoptoLight({color: true})],
+            },
+        ];
+        """
+        devices = parse_source(source, "light_aliases.ts").devices
+        self.assertEqual(len(devices), 3)
+        for device in devices:
+            self.assertFalse(device.partial)
+            self.assertEqual(device.unsupported_macros, [])
+            self.assertIn("light", [item.name for item in device.exposes])
+
+        ikea_color_temperature = next(item for item in devices[1].exposes if item.name == "color_temperature")
+        self.assertEqual((ikea_color_temperature.value_min, ikea_color_temperature.value_max), (250, 454))
+
+    def test_vendor_light_alias_keeps_unsupported_behavior_partial(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["GLEDOPTO"],
+            model: "GLEDOPTO",
+            vendor: "Gledopto",
+            extend: [gledoptoLight({configureReporting: true})],
+        }];
+        """
+        device = parse_source(source, "light_alias_partial.ts").devices[0]
+        self.assertTrue(device.partial)
+        self.assertEqual(device.unsupported_macros, ["gledoptoLight"])
+        self.assertIn("light", [item.name for item in device.exposes])
 
     def test_fluent_exposes_and_simple_configure_are_recovered_safely(self) -> None:
         source = """

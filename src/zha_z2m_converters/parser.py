@@ -800,10 +800,56 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         return [], [], None, False
     name = str(call["__call__"]).rsplit(".", 1)[-1]
     args = _call_args(call)
+    alias_name = name
+    alias_unsupported: set[str] = set()
     if name in {"ledvanceLight", "tuyaLight"}:
         name = "light"
         if call["__call__"].endswith("ledvanceLight") and args.get("color") is True:
             args = {**args, "color": {"modes": ["xy", "hs"]}}
+    elif name == "sengledLight":
+        alias_unsupported = set(args) - {"colorTemp", "color"}
+        if args.get("effect") is True or args.get("powerOnBehavior") is True:
+            alias_unsupported.update({key for key in ("effect", "powerOnBehavior") if args.get(key) is True})
+        name = "light"
+        # Sengled's wrapper disables features that the base light macro would
+        # otherwise add by default. The static light entities are equivalent.
+        args = {"effect": False, "powerOnBehavior": False, **args}
+    elif name == "ikeaLight":
+        alias_unsupported = set(args) - {"colorTemp", "color", "ota"}
+        for option in (
+            "effect",
+            "powerOnBehavior",
+            "turnsOffAtBrightness1",
+            "configureReporting",
+            "levelConfig",
+            "levelReportingConfig",
+            "moveToLevelWithOnOffDisable",
+        ):
+            if args.get(option) not in (None, False):
+                alias_unsupported.add(option)
+        if isinstance(args.get("endpointNames"), list) and args["endpointNames"]:
+            alias_unsupported.add("endpointNames")
+        if isinstance(args.get("colorTemp"), dict) and args["colorTemp"].get("viaColor") is True:
+            alias_unsupported.add("colorTemp.viaColor")
+        name = "light"
+        # ikeaLight(true) means IKEA's standard 250..454 mired range.
+        if args.get("colorTemp") is True:
+            args = {**args, "colorTemp": {"range": [250, 454]}}
+    elif name == "gledoptoLight":
+        alias_unsupported = set(args) - {"colorTemp", "color"}
+        for option in (
+            "powerOnBehavior",
+            "turnsOffAtBrightness1",
+            "configureReporting",
+            "levelConfig",
+            "levelReportingConfig",
+            "moveToLevelWithOnOffDisable",
+        ):
+            if args.get(option) not in (None, False):
+                alias_unsupported.add(option)
+        if isinstance(args.get("endpointNames"), list) and args["endpointNames"]:
+            alias_unsupported.add("endpointNames")
+        name = "light"
     elif name == "ledvanceOnOff":
         name = "onOff"
     if name in _SUPPORTED_METADATA_MACROS:
@@ -1102,12 +1148,32 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
             Binding(name, "genLevelCtrl", "currentLevel", direction="report"),
         ]
         if args.get("colorTemp"):
-            exposes.append(Expose("numeric", "color_temperature", "color_temperature", ("state", "set"), unit="mired"))
+            value_min = value_max = None
+            color_temp = args["colorTemp"]
+            if isinstance(color_temp, dict):
+                color_temp_range = color_temp.get("range")
+                if (
+                    isinstance(color_temp_range, list)
+                    and len(color_temp_range) == 2
+                    and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in color_temp_range)
+                ):
+                    value_min, value_max = color_temp_range
+            exposes.append(
+                Expose(
+                    "numeric",
+                    "color_temperature",
+                    "color_temperature",
+                    ("state", "set"),
+                    unit="mired",
+                    value_min=value_min,
+                    value_max=value_max,
+                )
+            )
             bindings.append(Binding(name, "lightingColorCtrl", "colorTemperature", direction="report"))
         if args.get("color"):
             exposes.append(Expose("numeric", "color", "color", ("state", "set")))
             bindings.append(Binding(name, "lightingColorCtrl", None, direction="report"))
-        return exposes, bindings, name, True
+        return exposes, bindings, alias_name if alias_name != name else name, not alias_unsupported
     if name in {"numeric", "binary", "text", "enumLookup", "actionEnumLookup"}:
         expose_type = {"numeric": "numeric", "binary": "binary", "text": "text", "enumLookup": "enum", "actionEnumLookup": "enum"}[name]
         expose_name = _static_text(args.get("name")) or _static_text(args.get("property"))
