@@ -651,6 +651,56 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(apply_report(switch_plan, RuntimeReport("genOnOff", "tuyaBacklightSwitch", 1)), {"backlight_mode": True})
         self.assertEqual(make_write(modes_plan, "backlight_mode", "normal").value, 1)
 
+    def test_tuya_on_off_remaining_static_options_are_expanded(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Tuya remaining options",
+            vendor: "Tuya",
+            endpoint: (device) => ({l1: 1, l2: 2}),
+            extend: [tuya.modernExtend.tuyaOnOff({
+                endpoints: ["l1", "l2"],
+                switchMode: true,
+                switchTypeCurtain: true,
+                indicatorModeNoneRelayPos: true,
+                powerOnBehavior3: true,
+            })],
+        }];
+        """
+        device = parse_source(source, "tuya-remaining-options.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.name, item.endpoint) for item in device.exposes],
+            [
+                ("state", 1),
+                ("state", 2),
+                ("switch_type_curtain", None),
+                ("power_on_behavior", 1),
+                ("power_on_behavior", 2),
+                ("indicator_mode", None),
+                ("switch_mode", 1),
+                ("switch_mode", 2),
+            ],
+        )
+        plan = build_runtime_plan(device)
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificTuya3", "switchMode", 1, endpoint=2)),
+            {"switch_mode": "scene"},
+        )
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificTuya3", "switchType", 3)),
+            {"switch_type_curtain": "button2-switch"},
+        )
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("genOnOff", "tuyaBacklightMode", 2)),
+            {"indicator_mode": "pos"},
+        )
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificTuya", "powerOnBehavior3", 2, endpoint=1)),
+            {"power_on_behavior": "previous"},
+        )
+        self.assertEqual(make_write(plan, "switch_mode", "scene").value, 1)
+        self.assertEqual(make_write(plan, "power_on_behavior", "on").value, 1)
+
     def test_tuya_on_off_endpoints_are_expanded_from_static_maps(self) -> None:
         source = """
         export const definitions = [

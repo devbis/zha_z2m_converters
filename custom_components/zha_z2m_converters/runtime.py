@@ -72,9 +72,12 @@ ZHA_ATTRIBUTE_NAMES: dict[str, str] = {
     "onOff": "on_off",
     "onTime": "on_time",
     "moesStartUpOnOff": "moes_start_up_on_off",
+    "powerOnBehavior": "power_on_behavior",
     "switchType": "switch_type",
+    "switchMode": "switch_mode",
     "tuyaBacklightMode": "tuya_backlight_mode",
     "tuyaBacklightSwitch": "tuya_backlight_switch",
+    "powerOnBehavior3": "power_on_behavior_3",
     "childLock": "child_lock",
     "presentValue": "present_value",
     "measuredValue": "measured_value",
@@ -172,6 +175,10 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
                     "backlightModeOffNormalInverted": "backlight_mode",
                     "backlightModeLowMediumHigh": "backlight_mode",
                     "backlightModeOffOn": "backlight_mode",
+                    "switchMode": "switch_mode",
+                    "switchTypeCurtain": "switch_type_curtain",
+                    "indicatorModeNoneRelayPos": "indicator_mode",
+                    "powerOnBehavior3": "power_on_behavior",
                 }
                 binding_names = {
                     "powerOutageMemory": "power_outage_memory",
@@ -183,6 +190,10 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
                     "backlightModeOffNormalInverted": "backlight_mode",
                     "backlightModeLowMediumHigh": "backlight_mode",
                     "backlightModeOffOn": "backlight_mode_off_on",
+                    "switchMode": "switch_mode",
+                    "switchTypeCurtain": "switch_type_curtain",
+                    "indicatorModeNoneRelayPos": "indicator_mode_none_relay_pos",
+                    "powerOnBehavior3": "power_on_behavior_3",
                 }
                 expose_name = expose_names.get(option)
                 binding_name = binding_names.get(option)
@@ -387,6 +398,26 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
                 item
                 for item in bindings
                 if item.converter in {"backlight_mode", "backlight_mode_off_on"}
+                and item.direction == "report"
+            ),
+            None,
+        )
+    if binding is None and expose.name == "indicator_mode":
+        binding = next(
+            (
+                item
+                for item in bindings
+                if item.converter in {"indicator_mode", "indicator_mode_none_relay_pos"}
+                and item.direction == "report"
+            ),
+            None,
+        )
+    if binding is None and expose.name == "power_on_behavior":
+        binding = next(
+            (
+                item
+                for item in bindings
+                if item.converter in {"power_on_behavior", "power_on_behavior_3"}
                 and item.direction == "report"
             ),
             None,
@@ -850,13 +881,14 @@ def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
         binding.converter.startswith("tuya_dp.") and _same_cluster(binding.cluster, entity.cluster)
         for binding in plan.bindings
     ) or (
-        entity.cluster in {"genOnOff", "manuSpecificTuya3"}
+        entity.cluster in {"genOnOff", "manuSpecificTuya3", "manuSpecificTuya"}
         and entity.attribute in {
             "moesStartUpOnOff",
             "powerOnBehavior",
             "switchType",
             "tuyaBacklightMode",
             "tuyaBacklightSwitch",
+            "powerOnBehavior3",
             "childLock",
         }
     )
@@ -874,6 +906,8 @@ def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
             required.setdefault(_tuya_on_off_cluster, set()).add(entity.endpoint or 1)
         elif entity.cluster == "manuSpecificTuya3":
             required.setdefault(_tuya3_cluster, set()).add(entity.endpoint or 1)
+        elif entity.cluster == "manuSpecificTuya":
+            required.setdefault(_tuya_cluster, set()).add(entity.endpoint or 1)
     if not required:
         return True
     replaces = getattr(builder, "replaces", None)
@@ -1100,6 +1134,24 @@ def _tuya3_cluster() -> Any:
 
         class AttributeDefs(BaseAttributeDefs):
             power_on_behavior = ZCLAttributeDef(id=0xD010, type=t.enum8, access="rw")
+            switch_mode = ZCLAttributeDef(id=0xD020, type=t.enum8, access="rw")
             switch_type = ZCLAttributeDef(id=0xD030, type=t.enum8, access="rw")
 
     return Tuya3Cluster
+
+
+def _tuya_cluster() -> Any:
+    """Return the declarative Tuya manufacturer cluster used by power-on behavior 3."""
+    import zigpy.types as t  # type: ignore
+    from zigpy.zcl.foundation import BaseAttributeDefs, ZCLAttributeDef  # type: ignore
+    from zhaquirks.clusters import CustomCluster  # type: ignore
+
+    class TuyaCluster(CustomCluster):
+        cluster_id = 0xEF00
+        name = "TuyaCluster"
+        ep_attribute = "tuya"
+
+        class AttributeDefs(BaseAttributeDefs):
+            power_on_behavior_3 = ZCLAttributeDef(id=0x4002, type=t.enum8, access="rw")
+
+    return TuyaCluster

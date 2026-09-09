@@ -1057,14 +1057,18 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         supported_options = {
             "endpoints",
             "switchType",
+            "switchTypeCurtain",
             "onOffCountdown",
             "powerOutageMemory",
             "powerOnBehavior2",
+            "powerOnBehavior3",
             "electricalMeasurements",
             "electricalMeasurementsFzConverter",
             "indicatorMode",
+            "indicatorModeNoneRelayPos",
             "childLock",
             "switchTypeButton",
+            "switchMode",
             "backlightModeOffNormalInverted",
             "backlightModeLowMediumHigh",
             "backlightModeOffOn",
@@ -1134,6 +1138,39 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("switch_type", "manuSpecificTuya3", "switchType", direction="command", expression=switch_type_expression),
                 ]
             )
+        if args.get("switchTypeCurtain") is True:
+            exposes.append(
+                Expose(
+                    "enum",
+                    "switch_type_curtain",
+                    "switch_type_curtain",
+                    ("state", "set"),
+                    values=("flip-switch", "sync-switch", "button-switch", "button2-switch"),
+                    category="config",
+                )
+            )
+            switch_type_curtain_expression = Expression(
+                "lookup",
+                ({"0": "flip-switch", "1": "sync-switch", "2": "button-switch", "3": "button2-switch"},),
+            )
+            bindings.extend(
+                [
+                    Binding(
+                        "switch_type_curtain",
+                        "manuSpecificTuya3",
+                        "switchType",
+                        direction="report",
+                        expression=switch_type_curtain_expression,
+                    ),
+                    Binding(
+                        "switch_type_curtain",
+                        "manuSpecificTuya3",
+                        "switchType",
+                        direction="command",
+                        expression=switch_type_curtain_expression,
+                    ),
+                ]
+            )
         # tuyaOnOff uses one of the two static Tuya power-on attributes unless
         # a manufacturer-dependent or otherwise unsupported variant is used.
         if args.get("powerOnBehavior2") is True:
@@ -1190,7 +1227,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         elif (
             not _is_predicate(args.get("powerOutageMemory"))
             and not _is_predicate(args.get("powerOnBehavior2"))
-            and "powerOnBehavior3" not in args
+            and ("powerOnBehavior3" not in args or args.get("powerOnBehavior3") is False)
         ):
             exposes.append(
                 Expose(
@@ -1209,8 +1246,41 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("power_on_behavior", "genOnOff", "moesStartUpOnOff", direction="command", expression=power_on_behavior_expression),
                 ]
             )
-        elif "powerOnBehavior3" in args and args.get("powerOnBehavior3") is not True:
-            unsupported_options.add("powerOnBehavior3")
+        elif args.get("powerOnBehavior3") is True:
+            power_on_behavior_expression = Expression("lookup", ({"0": "off", "1": "on", "2": "previous"},))
+            power_endpoints = endpoint_names or [None]
+            for endpoint in power_endpoints:
+                exposes.append(
+                    Expose(
+                        "enum",
+                        "power_on_behavior",
+                        "power_on_behavior",
+                        ("state", "set"),
+                        endpoint=endpoint,
+                        values=("off", "on", "previous"),
+                        category="config",
+                    )
+                )
+                bindings.extend(
+                    [
+                        Binding(
+                            "power_on_behavior_3",
+                            "manuSpecificTuya",
+                            "powerOnBehavior3",
+                            direction="report",
+                            endpoint=endpoint,
+                            expression=power_on_behavior_expression,
+                        ),
+                        Binding(
+                            "power_on_behavior_3",
+                            "manuSpecificTuya",
+                            "powerOnBehavior3",
+                            direction="command",
+                            endpoint=endpoint,
+                            expression=power_on_behavior_expression,
+                        ),
+                    ]
+                )
         if args.get("electricalMeasurements") is True:
             exposes.extend(
                 [
@@ -1244,6 +1314,36 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                 [
                     Binding("indicator_mode", "genOnOff", "tuyaBacklightMode", direction="report", expression=indicator_expression),
                     Binding("indicator_mode", "genOnOff", "tuyaBacklightMode", direction="command", expression=indicator_expression),
+                ]
+            )
+        if args.get("indicatorModeNoneRelayPos") is True:
+            exposes.append(
+                Expose(
+                    "enum",
+                    "indicator_mode",
+                    "indicator_mode",
+                    ("state", "set"),
+                    values=("none", "relay", "pos"),
+                    category="config",
+                )
+            )
+            indicator_none_relay_pos_expression = Expression("lookup", ({"0": "none", "1": "relay", "2": "pos"},))
+            bindings.extend(
+                [
+                    Binding(
+                        "indicator_mode_none_relay_pos",
+                        "genOnOff",
+                        "tuyaBacklightMode",
+                        direction="report",
+                        expression=indicator_none_relay_pos_expression,
+                    ),
+                    Binding(
+                        "indicator_mode_none_relay_pos",
+                        "genOnOff",
+                        "tuyaBacklightMode",
+                        direction="command",
+                        expression=indicator_none_relay_pos_expression,
+                    ),
                 ]
             )
         if args.get("childLock") is True:
@@ -1318,21 +1418,61 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("switch_type_button", "manuSpecificTuya3", "switchType", direction="command", expression=switch_button_expression),
                 ]
             )
-        for option in ("switchType", "onOffCountdown"):
+        if args.get("switchMode") is True:
+            switch_mode_expression = Expression("lookup", ({"0": "switch", "1": "scene"},))
+            switch_mode_endpoints = endpoint_names or [None]
+            for endpoint in switch_mode_endpoints:
+                exposes.append(
+                    Expose(
+                        "enum",
+                        "switch_mode",
+                        "switch_mode",
+                        ("state", "set"),
+                        endpoint=endpoint,
+                        values=("switch", "scene"),
+                        category="config",
+                    )
+                )
+                bindings.extend(
+                    [
+                        Binding(
+                            "switch_mode",
+                            "manuSpecificTuya3",
+                            "switchMode",
+                            direction="report",
+                            endpoint=endpoint,
+                            expression=switch_mode_expression,
+                        ),
+                        Binding(
+                            "switch_mode",
+                            "manuSpecificTuya3",
+                            "switchMode",
+                            direction="command",
+                            endpoint=endpoint,
+                            expression=switch_mode_expression,
+                        ),
+                    ]
+                )
+        for option in ("switchType", "switchTypeCurtain", "onOffCountdown", "switchMode", "indicatorModeNoneRelayPos"):
             if option in args and args[option] is not True and not _is_predicate(args[option]):
-                unsupported_options.add(option)
+                if args[option] is not False:
+                    unsupported_options.add(option)
         for option in (
             "powerOutageMemory",
             "powerOnBehavior2",
+            "powerOnBehavior3",
             "electricalMeasurements",
             "indicatorMode",
             "childLock",
             "switchTypeButton",
+            "switchTypeCurtain",
+            "switchMode",
+            "indicatorModeNoneRelayPos",
             "backlightModeOffNormalInverted",
             "backlightModeLowMediumHigh",
             "backlightModeOffOn",
         ):
-            if option in args and args[option] is not True and not _is_predicate(args[option]):
+            if option in args and args[option] is not True and args[option] is not False and not _is_predicate(args[option]):
                 unsupported_options.add(option)
         if "electricalMeasurementsFzConverter" in args:
             converter = _call_name(args["electricalMeasurementsFzConverter"])
