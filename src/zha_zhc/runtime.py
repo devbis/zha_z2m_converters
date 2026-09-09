@@ -422,6 +422,8 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
             _configure_builder_device_class(builder, plan.configure_actions)
             custom_clusters_ready = _configure_custom_clusters(builder, plan)
             for expose, entity in zip(device.exposes, plan.entities, strict=False):
+                if _is_default_measurement_entity(entity):
+                    continue
                 if _requires_custom_cluster(plan, entity) and not custom_clusters_ready:
                     continue
                 _apply_expose(builder, expose, entity)
@@ -429,6 +431,23 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
             if callable(add_to_registry):
                 add_to_registry()
     return registry
+
+
+_DEFAULT_MEASUREMENT_ATTRIBUTES = {
+    ("haElectricalMeasurement", "activePower"),
+    ("haElectricalMeasurement", "rmsCurrent"),
+    ("haElectricalMeasurement", "rmsVoltage"),
+    ("seMetering", "currentSummDelivered"),
+    ("electrical_measurement", "active_power"),
+    ("electrical_measurement", "rms_current"),
+    ("electrical_measurement", "rms_voltage"),
+    ("metering", "current_summ_delivered"),
+}
+
+
+def _is_default_measurement_entity(entity: RuntimeEntity) -> bool:
+    """Keep ZHA's native entities for standard electrical measurements."""
+    return (entity.cluster, entity.attribute) in _DEFAULT_MEASUREMENT_ATTRIBUTES
 
 
 def _prevent_unrepresented_default_entities(builder: Any, plan: RuntimePlan) -> None:
@@ -528,6 +547,8 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
                     int(action.maximum_interval or 0),
                     int(action.reportable_change or 0),
                 )
+            elif action.operation == "command":
+                await cluster.command(action.command, **(action.payload or {}))
             else:
                 _LOGGER.warning("Unsupported configure operation %r", action.operation)
         except Exception:  # pragma: no cover - transport errors depend on zigpy

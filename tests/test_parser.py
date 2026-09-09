@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from zha_zhc.exporter import export_python
+from zha_zhc import _select_devices
 from zha_zhc.mapping import normalize_device
 from zha_zhc.parser import parse_path, parse_source
 from zha_zhc.model import ConfigureAction
@@ -19,6 +20,24 @@ ROOT = Path(__file__).parent
 
 
 class ParserTests(unittest.TestCase):
+    def test_device_selection_supports_multiple_devices_and_full_source(self) -> None:
+        source = """
+        export const definitions = [
+            {zigbeeModel: ["ONE"], model: "One", vendor: "First"},
+            {zigbeeModel: ["TWO"], model: "Two", vendor: "Second"},
+        ];
+        """
+        devices = parse_source(source, "selection.ts").devices
+        self.assertEqual(len(_select_devices(devices, None)), 2)
+        selected = _select_devices(
+            devices,
+            [
+                {"manufacturer": "First", "model": "One"},
+                {"manufacturer": "Second", "model": "Two"},
+            ],
+        )
+        self.assertEqual([device.model for device in selected], ["One", "Two"])
+
     def test_static_definition_becomes_ir(self) -> None:
         source = (ROOT / "fixtures" / "simple_device.ts").read_text()
         result = parse_source(source, "simple_device.ts")
@@ -28,6 +47,46 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.model, "Test Plug")
         self.assertEqual([item.name for item in device.exposes], ["state", "temperature"])
         self.assertEqual([item.converter for item in device.from_zigbee], ["fz.on_off", "fz.temperature"])
+
+    def test_direct_fingerprints_and_tuya_white_labels_are_preserved(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["TS011F"],
+            model: "TS011F_plug_1",
+            vendor: "Tuya",
+            fingerprint: tuya.fingerprint("TS011F", ["_TZ3000_example"]),
+            whiteLabel: [tuya.whitelabel("Zbeacon", "TS011F_plug_1_1", "Smart plug", ["Zbeacon"])]
+        }];
+        """
+        device = parse_source(source, "fingerprints.ts").devices[0]
+        self.assertEqual(
+            device.fingerprints,
+            [
+                {"modelID": "TS011F", "manufacturerName": "_TZ3000_example"},
+                {"modelID": "TS011F", "manufacturerName": "Zbeacon"},
+            ],
+        )
+
+    def test_white_label_fingerprint_registers_exact_zha_signature(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["TS011F"],
+            model: "TS011F_plug_1",
+            vendor: "Tuya",
+            whiteLabel: [tuya.whitelabel("Zbeacon", "TS011F_plug_1_1", "Smart plug", ["Zbeacon"])]
+        }];
+        """
+        calls = []
+
+        class Builder:
+            def __init__(self, manufacturer, model):
+                calls.append((manufacturer, model))
+
+            def add_to_registry(self):
+                pass
+
+        register_with_zha(register_result(parse_source(source)), Builder)
+        self.assertEqual(calls, [("Zbeacon", "TS011F")])
 
     def test_normalization_adds_standard_clusters(self) -> None:
         source = (ROOT / "fixtures" / "simple_device.ts").read_text()
@@ -163,6 +222,40 @@ class ParserTests(unittest.TestCase):
 
         register_with_zha(register_result(parse_source(source)), Builder)
         self.assertEqual(prevented_clusters, [0x0702])
+
+    def test_standard_measurement_entities_are_not_duplicated(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Meter",
+            vendor: "Example",
+            exposes: [
+                {type: "power", name: "power", property: "power", unit: "W"},
+                {type: "current", name: "current", property: "current", unit: "A"},
+                {type: "voltage", name: "voltage", property: "voltage", unit: "V"},
+                {type: "energy", name: "energy", property: "energy", unit: "kWh"},
+            ],
+        }];
+        """
+        calls = []
+
+        class Builder:
+            def __init__(self, manufacturer, model):
+                pass
+
+            def sensor(self, **kwargs):
+                calls.append(kwargs)
+
+            def prevent_default_entity_creation(self, **kwargs):
+                pass
+
+            def add_to_registry(self):
+                pass
+
+        register_with_zha(register_result(parse_source(source)), Builder)
+        self.assertEqual(calls, [])
+        from zha_zhc.runtime import RuntimeEntity, _is_default_measurement_entity
+
+        self.assertTrue(_is_default_measurement_entity(RuntimeEntity("power", "numeric", "power", "haElectricalMeasurement", "activePower")))
 
     def test_modern_extend_macros_are_expanded_without_execution(self) -> None:
         source = (ROOT / "fixtures" / "modern_extend.ts").read_text()
@@ -418,6 +511,31 @@ class ParserTests(unittest.TestCase):
         plan = build_runtime_plan(device)
         self.assertEqual(plan.configure_actions, device.configure_actions)
 
+    def test_static_configure_commands_and_tuya_helpers_are_extracted(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["COMMANDS"],
+            model: "Commands",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await endpoint.command("genOnOff", "on", {payloadSize: 1, payload: 1});
+                await tuya.configureQuery(device, coordinatorEndpoint);
+                await tuya.configureBindBasic(device, coordinatorEndpoint);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-commands.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.operation, item.endpoint, item.cluster, item.command, item.payload) for item in device.configure_actions],
+            [
+                ("command", 1, "genOnOff", "on", {"payloadSize": 1, "payload": 1}),
+                ("command", 1, "manuSpecificTuya", "dataQuery", {}),
+                ("bind", 1, "genBasic", None, None),
+            ],
+        )
+
     def test_static_configure_actions_execute_only_whitelisted_operations(self) -> None:
         calls = []
 
@@ -432,6 +550,9 @@ class ParserTests(unittest.TestCase):
 
             async def configure_reporting(self, attribute, minimum, maximum, change):
                 calls.append(("reporting", attribute, minimum, maximum, change))
+
+            async def command(self, command, **payload):
+                calls.append(("command", command, payload))
 
         class Endpoint:
             in_clusters = {0x0006: Cluster()}
@@ -455,6 +576,7 @@ class ParserTests(unittest.TestCase):
                 maximum_interval=3600,
                 reportable_change=0,
             ),
+            ConfigureAction("command", 1, "genOnOff", command="on", payload={"payloadSize": 1}),
         )
         asyncio.run(_apply_configure_actions(Device(), actions))
         self.assertEqual(
@@ -463,6 +585,7 @@ class ParserTests(unittest.TestCase):
                 ("bind",),
                 ("read", ["onOff"]),
                 ("reporting", "onOff", 0, 3600, 0),
+                ("command", "on", {"payloadSize": 1}),
             ],
         )
 

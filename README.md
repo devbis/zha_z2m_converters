@@ -71,13 +71,23 @@ are preserved in the IR. The ZHA adapter registers one builder signature per
 fingerprint, so vendor-specific manufacturer names and model IDs can match
 without executing the converter module.
 
+Direct fingerprint helpers and static `tuya.whitelabel(...)` manufacturer
+aliases are also converted to exact ZHA signatures. This is important for
+devices such as `Zbeacon / TS011F`: once the integration is filtered to that
+manufacturer and model, its generated v2 quirk is registered for the exact
+signature and takes precedence over a generic built-in model-only quirk.
+
 Simple declarative configure callbacks are also represented in the plan. The
 initial whitelist includes endpoint-to-coordinator cluster binds written as
 `device.getEndpoint(1).bind(coordinatorEndpoint, "hvacThermostat")` or
 `reporting.bind(endpoint, coordinatorEndpoint, ["genPowerCfg"])`, endpoint
 attribute reads, static `endpoint.configureReporting(...)` payloads, and common
-static reporting helpers such as `reporting.temperature(endpoint)`. Other
-callback statements remain marked as partial and are never executed.
+static reporting helpers such as `reporting.temperature(endpoint)`. Static
+`endpoint.command(cluster, command, payload)` calls and the Tuya helpers
+`configureQuery` and `configureBindBasic` are also represented as declarative
+actions. Local constant arrays and indexed endpoint access are resolved without
+evaluating expressions. Other callback statements remain marked as partial and
+are never executed.
 
 The safe Tuya subset currently includes `tuyaBase()` with its static `dp`
 option, `dpOnOff`, `dpBinary`, `dpNumeric`, and `dpEnumLookup`, plus the
@@ -107,11 +117,20 @@ and add a YAML entry before starting Home Assistant:
 ```yaml
 zha_zhc:
   source: /config/zha_zhc/converters/src/devices/tuya.ts
-  manufacturer: _TZ3000_46t1rvdu
-  model: TS0001
+  devices:
+    - manufacturer: _TZ3000_46t1rvdu
+      model: TS0001
+    - manufacturer: Zbeacon
+      model: TS011F
 ```
 
-The optional manufacturer and model filters are useful while validating a
-device. They prevent unrelated converter definitions from being registered.
+The optional `devices` list is useful while validating selected devices. Each
+entry may specify a manufacturer, a model, or both. Multiple entries are
+combined. If `devices` is omitted, every definition from the selected source
+file or directory is registered.
 The integration registers definitions through the installed ZHA
 `QuirkBuilder`; it does not run TypeScript or JavaScript.
+
+For standard electrical measurement clusters, the adapter keeps ZHA's native
+measurement entities instead of creating duplicate converter entities. This
+allows the device's native scaling and reporting behavior to remain visible.

@@ -73,6 +73,8 @@ class ConfigureAction:
     minimum_interval: int | float | None = None
     maximum_interval: int | float | None = None
     reportable_change: Any = None
+    command: str | int | None = None
+    payload: dict[str, Any] | None = None
     target: str = "coordinator"
 
 

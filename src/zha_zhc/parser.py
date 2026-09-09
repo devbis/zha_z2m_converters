@@ -661,20 +661,23 @@ def _tuya_dp_extend(kind: str, args: dict[str, Any]) -> tuple[list[Expose], list
 
 def _fingerprints(value: Any) -> list[dict[str, str]]:
     """Expand static fingerprint helpers without importing converter code."""
-    if not isinstance(value, list):
-        return []
     result: list[dict[str, str]] = []
-    for item in value:
-        if isinstance(item, dict) and "__spread__" in item:
-            call = item["__spread__"]
-            if not isinstance(call, dict) or call.get("__call__") != "tuya.fingerprint":
-                continue
+    values = value if isinstance(value, list) else [{"__spread__": value}]
+    for item in values:
+        call = item.get("__spread__") if isinstance(item, dict) else None
+        if isinstance(call, dict) and call.get("__call__") == "tuya.fingerprint":
             args = call.get("args", [])
-            if len(args) != 2 or not isinstance(args[0], str) or not isinstance(args[1], list):
-                continue
-            for manufacturer in args[1]:
-                if isinstance(manufacturer, str):
-                    result.append({"modelID": args[0], "manufacturerName": manufacturer})
+            if len(args) == 2 and isinstance(args[0], str) and isinstance(args[1], list):
+                for manufacturer in args[1]:
+                    if isinstance(manufacturer, str):
+                        result.append({"modelID": args[0], "manufacturerName": manufacturer})
+            continue
+        if isinstance(item, dict) and item.get("__call__") == "tuya.fingerprint":
+            args = item.get("args", [])
+            if len(args) == 2 and isinstance(args[0], str) and isinstance(args[1], list):
+                for manufacturer in args[1]:
+                    if isinstance(manufacturer, str):
+                        result.append({"modelID": args[0], "manufacturerName": manufacturer})
             continue
         if not isinstance(item, dict):
             continue
@@ -682,6 +685,25 @@ def _fingerprints(value: Any) -> list[dict[str, str]]:
         manufacturer = _static_text(item.get("manufacturerName"))
         if model_id and manufacturer:
             result.append({"modelID": model_id, "manufacturerName": manufacturer})
+    return result
+
+
+def _white_label_fingerprints(value: Any, zigbee_models: list[str]) -> list[dict[str, str]]:
+    """Extract exact manufacturer fingerprints from static Tuya white labels."""
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict) or item.get("__call__") != "tuya.whitelabel":
+            continue
+        args = item.get("args", [])
+        if len(args) < 4 or not isinstance(args[3], list):
+            continue
+        for manufacturer in args[3]:
+            if not isinstance(manufacturer, str):
+                continue
+            for model_id in zigbee_models:
+                result.append({"modelID": model_id, "manufacturerName": manufacturer})
     return result
 
 
@@ -1109,6 +1131,24 @@ def _configure_reporting_actions(
     return actions
 
 
+def _configure_command_action(
+    endpoint: str | int,
+    args: list[Any],
+    locals_: dict[str, Any],
+) -> ConfigureAction | None:
+    if len(args) not in {2, 3}:
+        return None
+    cluster = _static_value(args[0])
+    command = _static_value(args[1])
+    payload = _resolve_config_value(args[2], locals_) if len(args) == 3 else {}
+    if not isinstance(cluster, (str, int)) or not isinstance(command, (str, int)) or not isinstance(payload, dict):
+        return None
+    if any(_static_value(value) is None and value is not None for value in payload.values()):
+        return None
+    static_payload = {str(key): _static_value(value) for key, value in payload.items()}
+    return ConfigureAction("command", endpoint, cluster, command=command, payload=static_payload, target="device")
+
+
 _REPORTING_HELPERS: dict[str, tuple[str, str, int | float, int | float, int | float | None, bool]] = {
     "onOff": ("genOnOff", "onOff", 0, 3600, 0, False),
     "onTime": ("genOnOff", "onTime", 0, 3600, 40, False),
@@ -1220,10 +1260,17 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             base = statement["__fluent__"]
             endpoint = _configure_endpoint(base, locals_)
             for method in statement.get("methods", []):
-                if method.get("name") not in {"bind", "read"} or endpoint is None:
+                if method.get("name") not in {"bind", "read", "command"} or endpoint is None:
                     unsupported = True
                     continue
                 args = method.get("args", [])
+                if method.get("name") == "command":
+                    command_action = _configure_command_action(endpoint, args, locals_)
+                    if command_action is not None:
+                        actions.append(command_action)
+                    else:
+                        unsupported = True
+                    continue
                 if method.get("name") == "bind":
                     if len(args) != 2:
                         unsupported = True
@@ -1252,6 +1299,24 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             continue
         call = _call_name(statement)
         args = statement.get("args", [])
+        if call in {"tuya.configureQuery", "tuya.configureBindBasic"}:
+            if len(args) == 2 and _identifier(args[0]) == "device" and _is_coordinator_endpoint(args[1]):
+                if call.endswith("configureQuery"):
+                    actions.append(
+                        ConfigureAction(
+                            "command",
+                            1,
+                            "manuSpecificTuya",
+                            command="dataQuery",
+                            payload={},
+                            target="device",
+                        )
+                    )
+                else:
+                    actions.append(ConfigureAction("bind", 1, "genBasic"))
+            else:
+                unsupported = True
+            continue
         if call == "tuya.configureMagicPacket":
             if len(args) == 2 and _identifier(args[0]) == "device" and _is_coordinator_endpoint(args[1]):
                 actions.append(
@@ -1266,7 +1331,7 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             else:
                 unsupported = True
             continue
-        if call and not call.startswith("reporting.") and call.rsplit(".", 1)[-1] in {"bind", "read", "configureReporting"}:
+        if call and not call.startswith("reporting.") and call.rsplit(".", 1)[-1] in {"bind", "read", "command", "configureReporting"}:
             method_name = call.rsplit(".", 1)[-1]
             receiver = {"__identifier__": call.rsplit(".", 1)[0]}
             endpoint = _configure_endpoint(receiver, locals_)
@@ -1302,6 +1367,13 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                 )
                 if reporting_actions is not None:
                     actions.extend(reporting_actions)
+                else:
+                    unsupported = True
+                continue
+            if method_name == "command":
+                command_action = _configure_command_action(endpoint, args, locals_)
+                if command_action is not None:
+                    actions.append(command_action)
                 else:
                     unsupported = True
                 continue
@@ -1368,6 +1440,8 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         return None
     raw_exposes = raw.get("exposes", [])
     fingerprints = _fingerprints(raw.get("fingerprint"))
+    fingerprints.extend(_white_label_fingerprints(raw.get("whiteLabel"), zigbee_models))
+    fingerprints = list({(item["modelID"], item["manufacturerName"]): item for item in fingerprints}.values())
     exposes = [_expose(item) for item in raw_exposes] if isinstance(raw_exposes, list) else []
     exposes = [item for item in exposes if item is not None]
     from_zigbee = _bindings(raw.get("fromZigbee"), "report")
