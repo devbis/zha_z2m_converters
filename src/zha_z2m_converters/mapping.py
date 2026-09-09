@@ -14,6 +14,8 @@ EXPOSE_CLUSTER_MAP: dict[str, tuple[str, str | None]] = {
     "illuminance": ("illuminance_measurement", "measured_value"),
     "occupancy": ("occupancy", "occupancy"),
     "contact": ("binary_input", "present_value"),
+    "co2": ("msCO2", "measuredValue"),
+    "pm25": ("pm25Measurement", "measuredValue"),
     "battery": ("power_configuration", "battery_percentage_remaining"),
     "voltage": ("electrical_measurement", "rms_voltage"),
     "current": ("electrical_measurement", "rms_current"),
@@ -39,6 +41,10 @@ CONVERTER_MAP: dict[str, tuple[str, str | None, str]] = {
     "battery": ("power_configuration", "battery_percentage_remaining", "report"),
     "metering": ("seMetering", None, "report"),
     "electrical_measurement": ("haElectricalMeasurement", None, "report"),
+    "lumi_contact": ("genOnOff", "onOff", "report"),
+    "lumi_co2": ("msCO2", "measuredValue", "report"),
+    "lumi_pm25": ("pm25Measurement", "measuredValue", "report"),
+    "lumi_power": ("genAnalogInput", "presentValue", "report"),
     "device_temperature": ("genDeviceTempCfg", "currentTemperature", "report"),
     "thermostat": ("hvacThermostat", None, "report"),
     "thermostat_local_temperature": ("hvacThermostat", "localTemp", "report"),
@@ -151,6 +157,8 @@ def normalize_device(device: DeviceDefinition) -> DeviceDefinition:
             cluster, attribute, direction = mapped
             scale = CONVERTER_SCALES.get(converter_name)
             expression = Expression("divide", (scale,)) if scale else binding.expression
+            if converter_name == "lumi_contact" and direction == "report":
+                expression = Expression("lookup", ({"0": True, "1": False},))
             normalized_from.append(
                 replace(binding, cluster=cluster, attribute=attribute, direction=direction, expression=expression)
             )

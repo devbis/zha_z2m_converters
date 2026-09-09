@@ -525,6 +525,8 @@ def _expose(value: Any) -> Expose | None:
             "illuminance": "illuminance",
             "occupancy": "occupancy",
             "contact": "contact",
+            "co2": "co2",
+            "pm25": "pm25",
             "battery": "battery",
             "voltage": "voltage",
             "current": "current",

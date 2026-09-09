@@ -20,6 +20,8 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "genBasic": 0x0000,
     "genScenes": 0x0005,
     "genIdentify": 0x0003,
+    "genAnalogInput": 0x000C,
+    "analog_input": 0x000C,
     "genLevelCtrl": 0x0008,
     "level_control": 0x0008,
     "genPowerCfg": 0x0001,
@@ -36,6 +38,10 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "occupancy": 0x0406,
     "msIlluminanceMeasurement": 0x0400,
     "illuminance_measurement": 0x0400,
+    "msCO2": 0x040D,
+    "carbon_dioxide_measurement": 0x040D,
+    "pm25Measurement": 0x042A,
+    "pm25_measurement": 0x042A,
     "lightingColorCtrl": 0x0300,
     "color_control": 0x0300,
     "hvacThermostat": 0x0201,
@@ -65,6 +71,8 @@ ZHA_ATTRIBUTE_NAMES: dict[str, str] = {
     "tuyaBacklightMode": "tuya_backlight_mode",
     "tuyaBacklightSwitch": "tuya_backlight_switch",
     "childLock": "child_lock",
+    "presentValue": "present_value",
+    "measuredValue": "measured_value",
 }
 
 
@@ -296,6 +304,24 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
     )
     if datapoint_binding is not None:
         return datapoint_binding
+    converter_aliases = {
+        "contact": "lumi_contact",
+        "co2": "lumi_co2",
+        "pm25": "lumi_pm25",
+        "power": "lumi_power",
+    }
+    converter_alias = converter_aliases.get(expose.name)
+    if converter_alias is not None:
+        specialized_binding = next(
+            (
+                item
+                for item in bindings
+                if item.converter.rsplit(".", 1)[-1] == converter_alias and item.direction == "report"
+            ),
+            None,
+        )
+        if specialized_binding is not None:
+            return specialized_binding
     semantic = {
         "temperature": "temperature",
         "humidity": "humidity",
@@ -666,6 +692,8 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
         "humidity": "sensor",
         "pressure": "sensor",
         "illuminance": "sensor",
+        "co2": "sensor",
+        "pm25": "sensor",
         "voltage": "sensor",
         "current": "sensor",
         "power": "sensor",

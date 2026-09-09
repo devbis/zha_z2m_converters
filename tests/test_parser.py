@@ -123,6 +123,47 @@ class ParserTests(unittest.TestCase):
         self.assertIn("on_off", {item.cluster for item in normalized.from_zigbee})
         self.assertIn("temperature_measurement", {item.cluster for item in normalized.from_zigbee})
 
+    def test_lumi_power_maps_to_analog_input(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Lumi power",
+            vendor: "Aqara",
+            fromZigbee: [lumi.fromZigbee.lumi_power],
+            exposes: [e.power()],
+        }];
+        """
+        device = parse_source(source, "lumi-power.ts").devices[0]
+        plan = build_runtime_plan(device)
+        power = next(item for item in plan.entities if item.property == "power")
+        self.assertEqual((power.cluster, power.attribute), ("genAnalogInput", "presentValue"))
+        self.assertEqual(apply_report(plan, RuntimeReport("genAnalogInput", "presentValue", 42)), {"power": 42})
+
+    def test_simple_lumi_measurements_use_declarative_bindings(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Lumi measurements",
+            vendor: "Aqara",
+            fromZigbee: [
+                lumi.fromZigbee.lumi_contact,
+                lumi.fromZigbee.lumi_co2,
+                lumi.fromZigbee.lumi_pm25,
+            ],
+            exposes: [e.contact(), e.co2(), e.pm25()],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-measurements.ts").devices[0])
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute) for item in plan.entities],
+            [
+                ("contact", "genOnOff", "onOff"),
+                ("co2", "msCO2", "measuredValue"),
+                ("pm25", "pm25Measurement", "measuredValue"),
+            ],
+        )
+        self.assertEqual(apply_report(plan, RuntimeReport("genOnOff", "onOff", 0)), {"contact": True})
+        self.assertEqual(apply_report(plan, RuntimeReport("msCO2", "measuredValue", 500)), {"co2": 500})
+        self.assertEqual(apply_report(plan, RuntimeReport("pm25Measurement", "measuredValue", 12)), {"pm25": 12})
+
     def test_standard_converter_aliases_are_normalized_to_zcl(self) -> None:
         source = """
         export const definitions = [{
