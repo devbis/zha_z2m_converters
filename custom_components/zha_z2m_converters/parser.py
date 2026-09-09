@@ -261,7 +261,10 @@ class _ObjectParser:
         if self.current().value == "(":
             self.take("(")
             wrapped = True
-        if self.current().value == "{":
+        if wrapped:
+            value = self.parse_object()
+            self.take(")")
+        elif self.current().value == "{":
             self.take("{")
             if self.current().value != "return":
                 raise UnsupportedSyntax("endpoint callback must return a static object")
@@ -272,8 +275,6 @@ class _ObjectParser:
             self.take("}")
         else:
             value = self.parse_object()
-        if wrapped:
-            self.take(")")
         if not isinstance(value, dict) or not value or not all(
             isinstance(key, str) and isinstance(endpoint, int) and not isinstance(endpoint, bool)
             for key, endpoint in value.items()
@@ -1186,7 +1187,11 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("power_outage_memory", "genOnOff", "moesStartUpOnOff", direction="command", expression=power_outage_expression),
                 ]
             )
-        elif not _is_predicate(args.get("powerOutageMemory")) and "powerOnBehavior3" not in args:
+        elif (
+            not _is_predicate(args.get("powerOutageMemory"))
+            and not _is_predicate(args.get("powerOnBehavior2"))
+            and "powerOnBehavior3" not in args
+        ):
             exposes.append(
                 Expose(
                     "enum",
@@ -1204,7 +1209,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("power_on_behavior", "genOnOff", "moesStartUpOnOff", direction="command", expression=power_on_behavior_expression),
                 ]
             )
-        elif args.get("powerOnBehavior3") is not True:
+        elif "powerOnBehavior3" in args and args.get("powerOnBehavior3") is not True:
             unsupported_options.add("powerOnBehavior3")
         if args.get("electricalMeasurements") is True:
             exposes.extend(
@@ -1920,7 +1925,14 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
                 supported = False
             for option, value in args.items():
                 if _is_predicate(value):
-                    conditional_extends.append({"call": item, "option": option, "predicate": value})
+                    conditional_extends.append(
+                        {
+                            "call": item,
+                            "option": option,
+                            "predicate": value,
+                            "endpoint_map": dict(endpoint_map),
+                        }
+                    )
         if name and not supported:
             unsupported_macros.append(name)
         if name == "electricityMeter":

@@ -137,7 +137,7 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
     """Build a controller-independent plan for reports and writes."""
     source = device
     if manufacturer_name is not None and device.conditional_extends:
-        from .parser import _modern_extend, predicate_matches
+        from .parser import _modern_extend, _resolve_endpoint, predicate_matches
 
         exposes = list(device.exposes)
         from_zigbee = list(device.from_zigbee)
@@ -155,29 +155,56 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
             # argument object would also regenerate the base switch,
             # measurements, and every other conditional feature once per
             # predicate.
-            conditional_call = {**call, "args": [{option: True}]}
+            conditional_args: dict[str, Any] = {option: True}
+            endpoints = args[0].get("endpoints")
+            if isinstance(endpoints, list):
+                conditional_args["endpoints"] = endpoints
+            conditional_call = {**call, "args": [conditional_args]}
             generated_exposes, generated_from, _, supported = _modern_extend(conditional_call)
             if supported:
                 expose_names = {
                     "powerOutageMemory": "power_outage_memory",
+                    "powerOnBehavior2": "power_on_behavior",
                     "indicatorMode": "indicator_mode",
                     "childLock": "child_lock",
                     "onOffCountdown": "countdown",
                     "switchTypeButton": "switch_type_button",
+                    "backlightModeOffNormalInverted": "backlight_mode",
+                    "backlightModeLowMediumHigh": "backlight_mode",
+                    "backlightModeOffOn": "backlight_mode",
                 }
                 binding_names = {
                     "powerOutageMemory": "power_outage_memory",
+                    "powerOnBehavior2": "power_on_behavior",
                     "indicatorMode": "indicator_mode",
                     "childLock": "child_lock",
                     "onOffCountdown": "on_off_countdown",
                     "switchTypeButton": "switch_type_button",
+                    "backlightModeOffNormalInverted": "backlight_mode",
+                    "backlightModeLowMediumHigh": "backlight_mode",
+                    "backlightModeOffOn": "backlight_mode_off_on",
                 }
                 expose_name = expose_names.get(option)
                 binding_name = binding_names.get(option)
                 if expose_name is None or binding_name is None:
                     continue
-                exposes.extend(item for item in generated_exposes if item.name == expose_name)
-                from_zigbee.extend(item for item in generated_from if item.converter == binding_name)
+                endpoint_map = conditional.get("endpoint_map", {})
+                exposes.extend(
+                    replace(
+                        item,
+                        endpoint=_resolve_endpoint(item.endpoint, endpoint_map),
+                    )
+                    for item in generated_exposes
+                    if item.name == expose_name
+                )
+                from_zigbee.extend(
+                    replace(
+                        item,
+                        endpoint=_resolve_endpoint(item.endpoint, endpoint_map),
+                    )
+                    for item in generated_from
+                    if item.converter == binding_name
+                )
         source = replace(device, exposes=exposes, from_zigbee=from_zigbee)
     normalized = normalize_device(source)
     entities = []

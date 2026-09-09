@@ -696,6 +696,42 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual([item.endpoint for item in plan.entities], [1, 2, 1, 2, 1, 2])
 
+    def test_tuya_on_off_conditional_options_keep_endpoint_context(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Tuya conditional endpoint options",
+            vendor: "Tuya",
+            endpoint: (device) => ({l1: 1, l2: 2}),
+            extend: [tuya.modernExtend.tuyaOnOff({
+                endpoints: ["l1", "l2"],
+                backlightModeOffOn: (manufacturer) => manufacturer !== "_NO_BACKLIGHT",
+                powerOnBehavior2: (manufacturer) => manufacturer === "_POWER_BEHAVIOR",
+            })],
+        }];
+        """
+        device = parse_source(source, "tuya-conditional-endpoints.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(len(device.conditional_extends), 2)
+
+        backlight = build_runtime_plan(device, "_NO_POWER_BEHAVIOR")
+        self.assertIn("backlight_mode", [item.name for item in backlight.device.exposes])
+        self.assertNotIn("power_on_behavior", [item.name for item in backlight.device.exposes])
+        self.assertEqual(
+            apply_report(backlight, RuntimeReport("genOnOff", "tuyaBacklightSwitch", 1)),
+            {"backlight_mode": True},
+        )
+
+        power_behavior = build_runtime_plan(device, "_POWER_BEHAVIOR")
+        self.assertIn("backlight_mode", [item.name for item in power_behavior.device.exposes])
+        self.assertEqual(
+            [item.endpoint for item in power_behavior.device.exposes if item.name == "power_on_behavior"],
+            [1, 2],
+        )
+        self.assertEqual(
+            apply_report(power_behavior, RuntimeReport("manuSpecificTuya3", "powerOnBehavior", 2, endpoint=2)),
+            {"power_on_behavior": "previous"},
+        )
+
     def test_tuya_on_off_conditional_options_are_expanded_per_fingerprint(self) -> None:
         source = (
             ROOT.parent
