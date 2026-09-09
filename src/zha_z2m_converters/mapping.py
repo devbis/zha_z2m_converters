@@ -16,6 +16,9 @@ EXPOSE_CLUSTER_MAP: dict[str, tuple[str, str | None]] = {
     "contact": ("binary_input", "present_value"),
     "co2": ("msCO2", "measuredValue"),
     "pm25": ("pm25Measurement", "measuredValue"),
+    "flow": ("msFlowMeasurement", "measuredValue"),
+    "soil_moisture": ("msSoilMoisture", "measuredValue"),
+    "occupancy_timeout": ("msOccupancySensing", "pirOToUDelay"),
     "battery": ("power_configuration", "battery_percentage_remaining"),
     "voltage": ("electrical_measurement", "rms_voltage"),
     "current": ("electrical_measurement", "rms_current"),
@@ -47,6 +50,9 @@ CONVERTER_MAP: dict[str, tuple[str, str | None, str]] = {
     "lumi_power": ("genAnalogInput", "presentValue", "report"),
     "co2": ("msCO2", "measuredValue", "report"),
     "pm25": ("pm25Measurement", "measuredValue", "report"),
+    "flow": ("msFlowMeasurement", "measuredValue", "report"),
+    "soil_moisture": ("msSoilMoisture", "measuredValue", "report"),
+    "occupancy_timeout": ("msOccupancySensing", "pirOToUDelay", "report"),
     "device_temperature": ("genDeviceTempCfg", "currentTemperature", "report"),
     "thermostat": ("hvacThermostat", None, "report"),
     "thermostat_local_temperature": ("hvacThermostat", "localTemp", "report"),
@@ -139,6 +145,7 @@ CONVERTER_SCALES = {
     "humidity": 100,
     "pressure": 10,
     "battery": 2,
+    "flow": 10,
 }
 
 

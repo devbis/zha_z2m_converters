@@ -181,6 +181,28 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(apply_report(plan, RuntimeReport("msCO2", "measuredValue", 0.0005019)), {"co2": 501})
         self.assertEqual(apply_report(plan, RuntimeReport("pm25Measurement", "measuredValue", 12)), {"pm25": 12})
 
+    def test_standard_numeric_measurements_use_declarative_bindings(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Standard measurements",
+            vendor: "Example",
+            fromZigbee: [fz.flow, fz.soil_moisture, fz.occupancy_timeout],
+            exposes: [e.numeric("flow", ea.STATE).withUnit("L/min"), e.numeric("soil_moisture", ea.STATE).withUnit("%"), e.numeric("occupancy_timeout", ea.STATE).withUnit("s")],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "standard-measurements.ts").devices[0])
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute) for item in plan.entities],
+            [
+                ("flow", "msFlowMeasurement", "measuredValue"),
+                ("soil_moisture", "msSoilMoisture", "measuredValue"),
+                ("occupancy_timeout", "msOccupancySensing", "pirOToUDelay"),
+            ],
+        )
+        self.assertEqual(apply_report(plan, RuntimeReport("msFlowMeasurement", "measuredValue", 25)), {"flow": 2.5})
+        self.assertEqual(apply_report(plan, RuntimeReport("msSoilMoisture", "measuredValue", 42)), {"soil_moisture": 42})
+        self.assertEqual(apply_report(plan, RuntimeReport("msOccupancySensing", "pirOToUDelay", 90)), {"occupancy_timeout": 90})
+
     def test_standard_converter_aliases_are_normalized_to_zcl(self) -> None:
         source = """
         export const definitions = [{
