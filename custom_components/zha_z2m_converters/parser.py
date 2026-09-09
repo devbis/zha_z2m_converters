@@ -1067,6 +1067,11 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         name = "onOff"
     if name in _SUPPORTED_METADATA_MACROS:
         return [], [], name, True
+    if name == "addTuyaCommonPrivateCluster":
+        # The cluster schema is fixed in lib/tuya.ts. Keep this macro separate
+        # from generic custom-cluster parsing until a declarative schema path
+        # is available for arbitrary vendor clusters.
+        return [], [], name, True
     if name == "tuyaBase":
         unsupported = set(args) - {"dp", "queryOnConfigure", "bindBasicOnConfigure"}
         for option in ("queryOnConfigure", "bindBasicOnConfigure"):
@@ -1170,6 +1175,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
             "childLock",
             "switchTypeButton",
             "switchMode",
+            "inchingSwitch",
             "backlightModeOffNormalInverted",
             "backlightModeLowMediumHigh",
             "backlightModeOffOn",
@@ -1552,9 +1558,68 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                             endpoint=endpoint,
                             expression=switch_mode_expression,
                         ),
+                ]
+            )
+        if args.get("inchingSwitch") is True:
+            quantity = len(endpoint_names) if endpoint_names else 1
+            for endpoint_number in range(1, quantity + 1):
+                exposes.extend(
+                    [
+                        Expose(
+                            "binary",
+                            f"inching_control_{endpoint_number}",
+                            f"inching_control_{endpoint_number}",
+                            ("state", "set"),
+                            endpoint=1,
+                            category="config",
+                        ),
+                        Expose(
+                            "numeric",
+                            f"inching_time_{endpoint_number}",
+                            f"inching_time_{endpoint_number}",
+                            ("state", "set"),
+                            endpoint=1,
+                            unit="s",
+                            value_min=1,
+                            value_max=65535,
+                            value_step=1,
+                            category="config",
+                        ),
                     ]
                 )
-        for option in ("switchType", "switchTypeCurtain", "onOffCountdown", "switchMode", "indicatorModeNoneRelayPos"):
+                bindings.extend(
+                    [
+                        Binding(
+                            f"inching_control_{endpoint_number}",
+                            "manuSpecificTuya4",
+                            f"inching_control_{endpoint_number}",
+                            endpoint=1,
+                            direction="report",
+                        ),
+                        Binding(
+                            f"inching_control_{endpoint_number}",
+                            "manuSpecificTuya4",
+                            f"inching_control_{endpoint_number}",
+                            endpoint=1,
+                            direction="command",
+                        ),
+                        Binding(
+                            f"inching_time_{endpoint_number}",
+                            "manuSpecificTuya4",
+                            f"inching_time_{endpoint_number}",
+                            endpoint=1,
+                            direction="report",
+                        ),
+                        Binding(
+                            f"inching_time_{endpoint_number}",
+                            "manuSpecificTuya4",
+                            f"inching_time_{endpoint_number}",
+                            endpoint=1,
+                            direction="command",
+                        ),
+                    ]
+                )
+        for option in ("switchType", "switchTypeCurtain", "onOffCountdown", "switchMode", "inchingSwitch", "indicatorModeNoneRelayPos"):
             if option in args and args[option] is not True and not _is_predicate(args[option]):
                 if args[option] is not False:
                     unsupported_options.add(option)
@@ -1568,6 +1633,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
             "switchTypeButton",
             "switchTypeCurtain",
             "switchMode",
+            "inchingSwitch",
             "indicatorModeNoneRelayPos",
             "backlightModeOffNormalInverted",
             "backlightModeLowMediumHigh",
@@ -2122,6 +2188,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
     to_zigbee = _bindings(raw.get("toZigbee"), "command")
     configure_actions, configure_unsupported = _configure_actions(raw.get("configure"))
     endpoint_clusters: list[EndpointCluster] = []
+    custom_clusters: list[str] = []
     extends: list[str] = []
     unsupported_macros: list[str] = []
     conditional_extends: list[dict[str, Any]] = []
@@ -2157,6 +2224,8 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
                 )
             if args.get("bindBasicOnConfigure") is True:
                 configure_actions.append(ConfigureAction("bind", 1, "genBasic"))
+        if name == "addTuyaCommonPrivateCluster":
+            custom_clusters.append("manuSpecificTuya4")
         if name == "tuyaOnOff":
             args = _call_args(item)
             endpoint_names = args.get("endpoints")
@@ -2219,6 +2288,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         extends=extends,
         configure_actions=configure_actions,
         endpoint_clusters=endpoint_clusters,
+        custom_clusters=custom_clusters,
         conditional_extends=conditional_extends,
         unsupported_macros=unsupported_macros,
         unsupported_fields=unsupported_fields,

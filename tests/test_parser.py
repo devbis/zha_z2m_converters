@@ -946,6 +946,67 @@ class ParserTests(unittest.TestCase):
             self.assertTrue(_configure_endpoint_clusters(Builder(), plan))
         self.assertEqual(calls, [(0x0019, {"cluster_type": "client", "endpoint_id": 1})])
 
+    def test_tuya_common_private_cluster_is_declarative(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["TS0002"],
+            model: "TS0002",
+            vendor: "Tuya",
+            extend: [tuya.clusters.addTuyaCommonPrivateCluster()],
+        }];
+        """
+        device = parse_source(source, "tuya-common-private-cluster.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.custom_clusters, ["manuSpecificTuya4"])
+        self.assertEqual(build_runtime_plan(device).custom_clusters, ["manuSpecificTuya4"])
+
+    def test_tuya_inching_switch_is_expanded_into_writable_entities(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["TS0002"],
+            model: "TS0002",
+            vendor: "Tuya",
+            endpoint: (device) => ({l1: 1, l2: 2}),
+            extend: [
+                tuya.modernExtend.tuyaOnOff({inchingSwitch: true, endpoints: ["l1", "l2"]}),
+                tuya.clusters.addTuyaCommonPrivateCluster(),
+            ],
+        }];
+        """
+        device = parse_source(source, "tuya-inching.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [item.name for item in device.exposes if item.name.startswith("inching_")],
+            ["inching_control_1", "inching_time_1", "inching_control_2", "inching_time_2"],
+        )
+        plan = build_runtime_plan(device)
+        control_write = make_write(plan, "inching_control_2", True)
+        self.assertEqual(control_write.command, "setInchingSwitch")
+        self.assertEqual(control_write.payload, {"payload": bytes([3, 0, 1])})
+        time_write = make_write(plan, "inching_time_2", 30.0)
+        self.assertEqual(time_write.payload, {"payload": bytes([2, 0, 30])})
+        with self.assertRaises(ValueError):
+            make_write(plan, "inching_time_2", 1.5)
+
+    def test_conditional_tuya_inching_switch_is_added_for_matching_manufacturer(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["TS0002"],
+            model: "TS0002",
+            vendor: "Tuya",
+            endpoint: (device) => ({l1: 1, l2: 2}),
+            extend: [
+                tuya.modernExtend.tuyaOnOff({inchingSwitch: (manufacturerName) => manufacturerName === "_TZ3000_test", endpoints: ["l1", "l2"]}),
+                tuya.clusters.addTuyaCommonPrivateCluster(),
+            ],
+        }];
+        """
+        device = parse_source(source, "tuya-conditional-inching.ts").devices[0]
+        matching = build_runtime_plan(device, "_TZ3000_test")
+        non_matching = build_runtime_plan(device, "_TZ3000_other")
+        self.assertIn("inching_control_2", {item.property for item in matching.entities})
+        self.assertNotIn("inching_control_2", {item.property for item in non_matching.entities})
+
     def test_fluent_exposes_and_simple_configure_are_recovered_safely(self) -> None:
         source = """
         export const definitions = [{

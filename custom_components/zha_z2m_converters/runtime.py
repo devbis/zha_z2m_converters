@@ -64,6 +64,7 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "window_covering": 0x0102,
     "door_lock": 0x0101,
     "manuSpecificTuya3": 0xE001,
+    "manuSpecificTuya4": 0xE000,
     "manuSpecificTuya": 0xEF00,
     "genOta": 0x0019,
 }
@@ -123,6 +124,7 @@ class RuntimePlan:
     bindings: list[Binding] = field(default_factory=list)
     configure_actions: list[ConfigureAction] = field(default_factory=list)
     endpoint_clusters: list[Any] = field(default_factory=list)
+    custom_clusters: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -165,6 +167,7 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
             conditional_call = {**call, "args": [conditional_args]}
             generated_exposes, generated_from, _, supported = _modern_extend(conditional_call)
             if supported:
+                endpoint_map = conditional.get("endpoint_map", {})
                 expose_names = {
                     "powerOutageMemory": "power_outage_memory",
                     "powerOnBehavior2": "power_on_behavior",
@@ -198,8 +201,16 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
                 expose_name = expose_names.get(option)
                 binding_name = binding_names.get(option)
                 if expose_name is None or binding_name is None:
+                    if option == "inchingSwitch":
+                        exposes.extend(
+                            replace(item, endpoint=_resolve_endpoint(item.endpoint, endpoint_map))
+                            for item in generated_exposes
+                        )
+                        from_zigbee.extend(
+                            replace(item, endpoint=_resolve_endpoint(item.endpoint, endpoint_map))
+                            for item in generated_from
+                        )
                     continue
-                endpoint_map = conditional.get("endpoint_map", {})
                 exposes.extend(
                     replace(
                         item,
@@ -239,6 +250,7 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
         [*normalized.from_zigbee, *normalized.to_zigbee],
         list(normalized.configure_actions),
         list(normalized.endpoint_clusters),
+        list(normalized.custom_clusters),
     )
 
 
@@ -295,6 +307,8 @@ def make_write(plan: RuntimePlan, property_name: str, value: Any) -> RuntimeWrit
                 command=_on_off_command(value),
                 payload={},
             )
+    if binding.converter.startswith("inching_"):
+        return _make_inching_write(entity, binding, value)
     if binding.converter.startswith("tuya_dp."):
         return _make_tuya_dp_write(entity, binding, value)
     return RuntimeWrite(entity.cluster, entity.attribute, _apply_write_expression(value, binding), entity.endpoint)
@@ -536,6 +550,46 @@ def _make_tuya_dp_write(entity: RuntimeEntity, binding: Binding, value: Any) -> 
         operation="command",
         command="dataRequest",
         payload={"seq": 1, "dpValues": [{"dp": binding.dp, "datatype": data_type, "data": payload_value}]},
+    )
+
+
+def _make_inching_write(entity: RuntimeEntity, binding: Binding, value: Any) -> RuntimeWrite:
+    """Encode one Tuya inching setting as the documented three-byte command."""
+    if not isinstance(entity.property, str) or "_" not in entity.property:
+        raise ValueError("invalid inching entity")
+    try:
+        endpoint_number = int(entity.property.rsplit("_", 1)[-1])
+    except ValueError as exc:
+        raise ValueError("invalid inching endpoint") from exc
+    if not 1 <= endpoint_number <= 6:
+        raise ValueError("inching endpoint must be between 1 and 6")
+    if binding.converter.startswith("inching_control"):
+        if isinstance(value, str):
+            enabled = value.upper() in {"ENABLE", "ON", "TRUE", "1"}
+        elif isinstance(value, bool):
+            enabled = value
+        else:
+            raise ValueError("inching control requires a boolean or ENABLE/DISABLE")
+        seconds = 1
+    else:
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or int(value) != value
+            or not 1 <= value <= 65535
+        ):
+            raise ValueError("inching time must be an integer between 1 and 65535 seconds")
+        enabled = False
+        seconds = int(value)
+    state = (1 if enabled else 0) if endpoint_number == 1 else (1 << (endpoint_number - 1)) + int(enabled)
+    return RuntimeWrite(
+        "manuSpecificTuya4",
+        "inching",
+        value,
+        1,
+        operation="command",
+        command="setInchingSwitch",
+        payload={"payload": bytes((state, seconds >> 8, seconds & 0xFF))},
     )
 
 
@@ -881,7 +935,7 @@ def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
         binding.converter.startswith("tuya_dp.") and _same_cluster(binding.cluster, entity.cluster)
         for binding in plan.bindings
     ) or (
-        entity.cluster in {"genOnOff", "manuSpecificTuya3", "manuSpecificTuya"}
+        entity.cluster in {"genOnOff", "manuSpecificTuya3", "manuSpecificTuya", "manuSpecificTuya4"}
         and entity.attribute in {
             "moesStartUpOnOff",
             "powerOnBehavior",
@@ -897,6 +951,10 @@ def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
 def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
     """Install the small Python-only custom clusters required by Tuya entities."""
     required: dict[Any, set[Any]] = {}
+    if "manuSpecificTuya4" in plan.custom_clusters or any(entity.cluster == "manuSpecificTuya4" for entity in plan.entities):
+        # Tuya's common private cluster is used as a control cluster on the
+        # primary endpoint, including multi-endpoint switches.
+        required.setdefault(_tuya4_cluster, set()).add(1)
     for entity in plan.entities:
         if not _requires_custom_cluster(plan, entity):
             continue
@@ -1155,3 +1213,98 @@ def _tuya_cluster() -> Any:
             power_on_behavior_3 = ZCLAttributeDef(id=0x4002, type=t.enum8, access="rw")
 
     return TuyaCluster
+
+
+def _tuya4_cluster() -> Any:
+    """Return the declarative Tuya private cluster used by inching controls."""
+    import base64
+    import binascii
+
+    import zigpy.types as t  # type: ignore
+    from zigpy.zcl import foundation  # type: ignore
+    from zigpy.zcl.foundation import BaseAttributeDefs, BaseCommandDefs, ZCLAttributeDef, ZCLCommandDef  # type: ignore
+    from zhaquirks.clusters import CustomCluster  # type: ignore
+
+    attribute_defs: dict[str, Any] = {
+        "random_timing": ZCLAttributeDef(id=0xD001, type=t.CharacterString, access="rw"),
+        "cycle_timing": ZCLAttributeDef(id=0xD002, type=t.CharacterString, access="rw"),
+        "inching": ZCLAttributeDef(id=0xD003, type=t.CharacterString, access="rw"),
+    }
+    virtual_attributes: dict[int, tuple[int, str]] = {}
+    for endpoint_number in range(1, 7):
+        control_id = 0xD100 + endpoint_number
+        time_id = 0xD110 + endpoint_number
+        attribute_defs[f"inching_control_{endpoint_number}"] = ZCLAttributeDef(id=control_id, type=t.Bool, access="rw")
+        attribute_defs[f"inching_time_{endpoint_number}"] = ZCLAttributeDef(id=time_id, type=t.uint16_t, access="rw")
+        virtual_attributes[control_id] = (endpoint_number, "control")
+        virtual_attributes[time_id] = (endpoint_number, "time")
+
+    class Tuya4Cluster(CustomCluster):
+        cluster_id = 0xE000
+        name = "Tuya4Cluster"
+        ep_attribute = "tuya4"
+
+        AttributeDefs = type("AttributeDefs", (BaseAttributeDefs,), attribute_defs)
+
+        class ServerCommandDefs(BaseCommandDefs):
+            set_random_timing = ZCLCommandDef(id=0xF7, schema={"payload": t.LVBytes})
+            set_cycle_timing = ZCLCommandDef(id=0xF8, schema={"payload": t.LVBytes})
+            set_inching_switch = ZCLCommandDef(id=0xFB, schema={"payload": t.LVBytes})
+
+        def _update_attribute(self, attrid: Any, value: Any) -> None:
+            attribute_id = getattr(attrid, "id", attrid)
+            super()._update_attribute(attrid, value)
+            if attribute_id != self.AttributeDefs.inching.id:
+                return
+            try:
+                raw = base64.b64decode(value if isinstance(value, (str, bytes)) else str(value), validate=False)
+            except (binascii.Error, ValueError, TypeError):
+                return
+            for offset in range(0, len(raw) - 2, 3):
+                state, high, low = raw[offset : offset + 3]
+                endpoint_number = 1 if state in {0, 1} else int(math.log2(state)) + 1
+                if endpoint_number not in range(1, 7):
+                    continue
+                control_id = next(
+                    attr_id for attr_id, item in virtual_attributes.items() if item == (endpoint_number, "control")
+                )
+                time_id = next(attr_id for attr_id, item in virtual_attributes.items() if item == (endpoint_number, "time"))
+                super()._update_attribute(control_id, bool(state & 1))
+                super()._update_attribute(time_id, (high << 8) | low)
+
+        async def write_attributes(self, attributes: dict[Any, Any], *args: Any, **kwargs: Any) -> Any:
+            statuses = []
+            for attribute, value in attributes.items():
+                attribute_id = self.attributes_by_name[attribute].id if isinstance(attribute, str) else getattr(attribute, "id", attribute)
+                virtual = virtual_attributes.get(attribute_id)
+                if virtual is None:
+                    return await super().write_attributes(attributes, *args, **kwargs)
+                endpoint_number, field = virtual
+                if field == "control":
+                    if isinstance(value, str):
+                        enabled = value.upper() in {"ENABLE", "ON", "TRUE", "1"}
+                    elif isinstance(value, bool):
+                        enabled = value
+                    else:
+                        raise ValueError("inching control requires a boolean or ENABLE/DISABLE")
+                    self._update_attribute(attribute_id, enabled)
+                    seconds = int(self._attr_cache.get(getattr(self.AttributeDefs, f"inching_time_{endpoint_number}").id, 1))
+                else:
+                    if (
+                        not isinstance(value, (int, float))
+                        or isinstance(value, bool)
+                        or int(value) != value
+                        or not 1 <= value <= 65535
+                    ):
+                        raise ValueError("inching time must be an integer between 1 and 65535 seconds")
+                    value = int(value)
+                    self._update_attribute(attribute_id, value)
+                    enabled = bool(self._attr_cache.get(getattr(self.AttributeDefs, f"inching_control_{endpoint_number}").id, False))
+                    seconds = value
+                state = (1 if enabled else 0) if endpoint_number == 1 else (1 << (endpoint_number - 1)) + int(enabled)
+                payload = bytes((state, seconds >> 8, seconds & 0xFF))
+                await self.command(self.ServerCommandDefs.set_inching_switch.id, payload=payload)
+                statuses.append(foundation.WriteAttributesStatusRecord(foundation.Status.SUCCESS))
+            return [statuses]
+
+    return Tuya4Cluster
