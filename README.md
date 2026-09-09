@@ -150,7 +150,7 @@ The integration creates Python-side ZHA quirks through the installed
 Run the complete test suite with:
 
 ```shell
-PYTHONPATH=src python3 -m unittest discover -s tests -q
+PYTHONPATH=custom_components python3 -m unittest discover -s tests -q
 ```
 
 Run the coverage report against the bundled converter snapshot with:

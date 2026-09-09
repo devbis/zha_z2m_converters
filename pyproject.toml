@@ -21,7 +21,7 @@ zha-z2m-converters = "zha_z2m_converters.cli:main"
 zha-z2m-converters-coverage = "zha_z2m_converters.coverage:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["custom_components"]
 
 [tool.setuptools.package-data]
 zha_z2m_converters = ["py.typed", "manifest.json"]
