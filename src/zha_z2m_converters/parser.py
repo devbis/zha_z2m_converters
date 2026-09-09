@@ -66,7 +66,7 @@ class _ObjectParser:
                     values.append(self.parse_value())
                 except UnsupportedSyntax:
                     values.append({"__unsupported__": "array-item"})
-                    self.skip_to_object_boundary(value_start, boundaries=(",", "]"))
+                    self.skip_to_array_boundary(value_start)
                 if self.current().value == ",":
                     self.take(",")
                 elif self.current().value != "]":
@@ -325,6 +325,31 @@ class _ObjectParser:
                 elif value in boundaries:
                     return
             self.take()
+
+    def skip_to_array_boundary(self, start: int) -> None:
+        """Skip one unsupported array item without crossing its enclosing array."""
+        stack: list[str] = []
+        pairs = {
+            ")": "(",
+            "]": "[",
+            "}": "{",
+        }
+        index = start
+        while index < len(self.tokens):
+            value = self.tokens[index].value
+            if value in ("(", "[", "{"):
+                stack.append(value)
+            elif value in pairs:
+                if stack and stack[-1] == pairs[value]:
+                    stack.pop()
+                elif not stack and value == "]":
+                    self.index = index
+                    return
+            elif not stack and value == ",":
+                self.index = index
+                return
+            index += 1
+        self.index = len(self.tokens)
 
     def skip_balanced(self, opening: str, closing: str) -> None:
         self.take(opening)
@@ -856,7 +881,10 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
     if name in _SUPPORTED_METADATA_MACROS:
         return [], [], name, True
     if name == "tuyaBase":
-        unsupported = set(args) - {"dp"}
+        unsupported = set(args) - {"dp", "queryOnConfigure", "bindBasicOnConfigure"}
+        for option in ("queryOnConfigure", "bindBasicOnConfigure"):
+            if option in args and args[option] not in (None, True, False):
+                unsupported.add(option)
         if args.get("dp") is True:
             return [], [Binding("tuya_datapoints", "manuSpecificTuya", "dpValues", direction="event")], name, not unsupported
         return [], [], name, not unsupported
@@ -1689,6 +1717,21 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
             extends.append(macro_name)
         generated_exposes, generated_from, name, supported = _modern_extend(item)
         endpoint_clusters.extend(_endpoint_clusters_for_extend(item))
+        if name == "tuyaBase":
+            args = _call_args(item)
+            if args.get("queryOnConfigure") is True:
+                configure_actions.append(
+                    ConfigureAction(
+                        "command",
+                        1,
+                        "manuSpecificTuya",
+                        command="dataQuery",
+                        payload={},
+                        target="device",
+                    )
+                )
+            if args.get("bindBasicOnConfigure") is True:
+                configure_actions.append(ConfigureAction("bind", 1, "genBasic"))
         if name == "tuyaOnOff":
             args = _call_args(item)
             for option, value in args.items():
@@ -1782,6 +1825,35 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
                 continue
             if set(raw) in ({"__unsupported__"}, {"__spread__"}):
                 # A spread entry from an aggregate index is not a device object.
+                if raw.get("__unsupported__") == "array-item":
+                    result.diagnostics.append(
+                        Diagnostic(
+                            "warning",
+                            "unsupported-definition",
+                            "definition contains unsupported dynamic syntax",
+                            filename,
+                            token.line,
+                            token.column,
+                        )
+                    )
+                    result.rejected_definitions += 1
+                continue
+            extend = raw.get("extend")
+            if isinstance(extend, list) and any(
+                item == {"__unsupported__": "array-item"} for item in extend
+            ):
+                result.diagnostics.append(
+                    Diagnostic(
+                        "warning",
+                        "unsupported-definition",
+                        "definition contains unsupported dynamic syntax",
+                        filename,
+                        token.line,
+                        token.column,
+                        path=_string(raw.get("model")),
+                    )
+                )
+                result.rejected_definitions += 1
                 continue
             device = _device(raw, token, filename, result.diagnostics)
             if device:

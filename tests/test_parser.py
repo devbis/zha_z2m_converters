@@ -40,6 +40,18 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual([device.model for device in selected], ["One", "Two"])
 
+    def test_unsupported_definition_does_not_reject_other_array_items(self) -> None:
+        source = """
+        export const definitions = [
+            {model: "Before", vendor: "Example"},
+            {model: "Unsupported", vendor: "Example", extend: [modernExtend.illuminance({scale: (value) => value})]},
+            {model: "After", vendor: "Example"},
+        ];
+        """
+        result = parse_source(source, "partial-array.ts")
+        self.assertEqual([device.model for device in result.devices], ["Before", "After"])
+        self.assertEqual(result.rejected_definitions, 1)
+
     def test_static_definition_becomes_ir(self) -> None:
         source = (ROOT / "fixtures" / "simple_device.ts").read_text()
         result = parse_source(source, "simple_device.ts")
@@ -328,6 +340,39 @@ class ParserTests(unittest.TestCase):
             register_with_zha(register_result(parse_source(source)), Builder)
         self.assertEqual(len(replacements), 1)
         self.assertEqual([item[1]["attribute_name"] for item in entities], ["dp_1", "dp_2"])
+
+    def test_tuya_base_configure_options_are_declarative(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Tuya configure",
+            vendor: "Tuya",
+            extend: [tuya.modernExtend.tuyaBase({dp: true, queryOnConfigure: true, bindBasicOnConfigure: true})],
+        }];
+        """
+        device = parse_source(source, "tuya_base_configure.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.unsupported_macros, [])
+        self.assertEqual(
+            [(item.operation, item.endpoint, item.cluster, item.command, item.payload) for item in device.configure_actions],
+            [
+                ("command", 1, "manuSpecificTuya", "dataQuery", {}),
+                ("bind", 1, "genBasic", None, None),
+            ],
+        )
+        self.assertEqual([(item.cluster, item.attribute) for item in device.from_zigbee], [("manuSpecificTuya", "dpValues")])
+
+    def test_tuya_base_unsupported_options_remain_partial(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Tuya time sync",
+            vendor: "Tuya",
+            extend: [tuya.modernExtend.tuyaBase({queryOnConfigure: true, timeStart: "2000"})],
+        }];
+        """
+        device = parse_source(source, "tuya_base_time.ts").devices[0]
+        self.assertTrue(device.partial)
+        self.assertIn("tuyaBase", device.unsupported_macros)
+        self.assertEqual(device.configure_actions[0].command, "dataQuery")
 
     def test_tuya_datapoint_wrappers_and_range_scale_are_static(self) -> None:
         source = """
