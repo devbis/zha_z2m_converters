@@ -621,6 +621,36 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificTuya3", "powerOnBehavior", 2)), {"power_on_behavior": "previous"})
         self.assertEqual(apply_report(plan, RuntimeReport("haElectricalMeasurement", "activePower", 42)), {"power": 42})
 
+    def test_tuya_on_off_backlight_options_are_static(self) -> None:
+        source = """
+        export const definitions = [
+            {
+                model: "Tuya backlight modes",
+                vendor: "Tuya",
+                extend: [tuya.modernExtend.tuyaOnOff({backlightModeOffNormalInverted: true})],
+            },
+            {
+                model: "Tuya backlight levels",
+                vendor: "Tuya",
+                extend: [tuya.modernExtend.tuyaOnOff({backlightModeLowMediumHigh: true})],
+            },
+            {
+                model: "Tuya backlight switch",
+                vendor: "Tuya",
+                extend: [tuya.modernExtend.tuyaOnOff({backlightModeOffOn: true})],
+            },
+        ];
+        """
+        devices = parse_source(source, "tuya-backlight.ts").devices
+        self.assertEqual([device.partial for device in devices], [False, False, False])
+        modes_plan = build_runtime_plan(devices[0])
+        levels_plan = build_runtime_plan(devices[1])
+        switch_plan = build_runtime_plan(devices[2])
+        self.assertEqual(apply_report(modes_plan, RuntimeReport("genOnOff", "tuyaBacklightMode", 2)), {"backlight_mode": "inverted"})
+        self.assertEqual(apply_report(levels_plan, RuntimeReport("genOnOff", "tuyaBacklightMode", 2)), {"backlight_mode": "high"})
+        self.assertEqual(apply_report(switch_plan, RuntimeReport("genOnOff", "tuyaBacklightSwitch", 1)), {"backlight_mode": True})
+        self.assertEqual(make_write(modes_plan, "backlight_mode", "normal").value, 1)
+
     def test_tuya_on_off_conditional_options_are_expanded_per_fingerprint(self) -> None:
         source = (
             ROOT.parent

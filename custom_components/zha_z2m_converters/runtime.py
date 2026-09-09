@@ -352,6 +352,16 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
         "countdown": "on_off_countdown",
     }.get(expose.name, expose.name)
     binding = next((item for item in bindings if item.converter.rsplit(".", 1)[-1] == semantic), None)
+    if binding is None and expose.name == "backlight_mode":
+        binding = next(
+            (
+                item
+                for item in bindings
+                if item.converter in {"backlight_mode", "backlight_mode_off_on"}
+                and item.direction == "report"
+            ),
+            None,
+        )
     if binding is not None:
         return binding
     measurement_attributes = {
@@ -817,6 +827,7 @@ def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
             "powerOnBehavior",
             "switchType",
             "tuyaBacklightMode",
+            "tuyaBacklightSwitch",
             "childLock",
         }
     )

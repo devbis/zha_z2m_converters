@@ -989,6 +989,9 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
             "indicatorMode",
             "childLock",
             "switchTypeButton",
+            "backlightModeOffNormalInverted",
+            "backlightModeLowMediumHigh",
+            "backlightModeOffOn",
         }
         unsupported_options = set(args) - supported_options
         bindings = [Binding("on_off", "genOnOff", "onOff", direction="report")]
@@ -1135,6 +1138,51 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
                     Binding("child_lock", "genOnOff", "childLock", direction="command", expression=child_lock_expression),
                 ]
             )
+        if args.get("backlightModeOffNormalInverted") is True:
+            exposes.append(
+                Expose(
+                    "enum",
+                    "backlight_mode",
+                    "backlight_mode",
+                    ("state", "set"),
+                    values=("off", "normal", "inverted"),
+                    category="config",
+                )
+            )
+            backlight_expression = Expression("lookup", ({"0": "off", "1": "normal", "2": "inverted"},))
+            bindings.extend(
+                [
+                    Binding("backlight_mode", "genOnOff", "tuyaBacklightMode", direction="report", expression=backlight_expression),
+                    Binding("backlight_mode", "genOnOff", "tuyaBacklightMode", direction="command", expression=backlight_expression),
+                ]
+            )
+        if args.get("backlightModeLowMediumHigh") is True:
+            exposes.append(
+                Expose(
+                    "enum",
+                    "backlight_mode",
+                    "backlight_mode",
+                    ("state", "set"),
+                    values=("low", "medium", "high"),
+                    category="config",
+                )
+            )
+            backlight_expression = Expression("lookup", ({"0": "low", "1": "medium", "2": "high"},))
+            bindings.extend(
+                [
+                    Binding("backlight_mode", "genOnOff", "tuyaBacklightMode", direction="report", expression=backlight_expression),
+                    Binding("backlight_mode", "genOnOff", "tuyaBacklightMode", direction="command", expression=backlight_expression),
+                ]
+            )
+        if args.get("backlightModeOffOn") is True:
+            exposes.append(Expose("binary", "backlight_mode", "backlight_mode", ("state", "set"), category="config"))
+            backlight_expression = Expression("lookup", ({"0": False, "1": True},))
+            bindings.extend(
+                [
+                    Binding("backlight_mode_off_on", "genOnOff", "tuyaBacklightSwitch", direction="report", expression=backlight_expression),
+                    Binding("backlight_mode_off_on", "genOnOff", "tuyaBacklightSwitch", direction="command", expression=backlight_expression),
+                ]
+            )
         if args.get("switchTypeButton") is True:
             exposes.append(
                 Expose(
@@ -1163,6 +1211,9 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
             "indicatorMode",
             "childLock",
             "switchTypeButton",
+            "backlightModeOffNormalInverted",
+            "backlightModeLowMediumHigh",
+            "backlightModeOffOn",
         ):
             if option in args and args[option] is not True and not _is_predicate(args[option]):
                 unsupported_options.add(option)
