@@ -11,7 +11,7 @@ from typing import Any
 
 from .lexer import Token, tokenize
 from .mapping import CONVERTER_MAP
-from .model import Binding, ConfigureAction, DeviceDefinition, Diagnostic, Expose, Expression, ParseResult
+from .model import Binding, ConfigureAction, DeviceDefinition, Diagnostic, EndpointCluster, Expose, Expression, ParseResult
 from .source import load_sources
 
 
@@ -582,6 +582,7 @@ _SUPPORTED_METADATA_MACROS = {
     "reconfigureReportingsOnDeviceAnnounce",
     "skipDefaultResponse",
     "bindCluster",
+    "lumiZigbeeOTA",
 }
 
 
@@ -1264,6 +1265,16 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
     return [], [], name, False
 
 
+def _endpoint_clusters_for_extend(call: Any) -> list[EndpointCluster]:
+    """Extract endpoint cluster changes from safe modernExtend metadata."""
+    call_name = _call_name(call)
+    if call_name and call_name.rsplit(".", 1)[-1] == "lumiZigbeeOTA":
+        # Lumi devices may omit the OTA client cluster from endpoint 1 even
+        # though their firmware supports standard Zigbee OTA updates.
+        return [EndpointCluster(1, "genOta", "output")]
+    return []
+
+
 def _bindings(values: Any, direction: str) -> list[Binding]:
     if not isinstance(values, list):
         return []
@@ -1660,6 +1671,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
     from_zigbee = _bindings(raw.get("fromZigbee"), "report")
     to_zigbee = _bindings(raw.get("toZigbee"), "command")
     configure_actions, configure_unsupported = _configure_actions(raw.get("configure"))
+    endpoint_clusters: list[EndpointCluster] = []
     extends: list[str] = []
     unsupported_macros: list[str] = []
     conditional_extends: list[dict[str, Any]] = []
@@ -1676,6 +1688,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         if macro_name:
             extends.append(macro_name)
         generated_exposes, generated_from, name, supported = _modern_extend(item)
+        endpoint_clusters.extend(_endpoint_clusters_for_extend(item))
         if name == "tuyaOnOff":
             args = _call_args(item)
             for option, value in args.items():
@@ -1722,6 +1735,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         to_zigbee=to_zigbee,
         extends=extends,
         configure_actions=configure_actions,
+        endpoint_clusters=endpoint_clusters,
         conditional_extends=conditional_extends,
         unsupported_macros=unsupported_macros,
         unsupported_fields=unsupported_fields,

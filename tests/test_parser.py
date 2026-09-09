@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from types import ModuleType
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -11,7 +13,7 @@ from zha_z2m_converters import _select_devices
 from zha_z2m_converters.mapping import normalize_device
 from zha_z2m_converters.parser import parse_path, parse_source
 from zha_z2m_converters.model import ConfigureAction, Expose
-from zha_z2m_converters.runtime import _apply_configure_actions, _apply_expose, _make_enum_class
+from zha_z2m_converters.runtime import _apply_configure_actions, _apply_expose, _configure_endpoint_clusters, _make_enum_class
 from zha_z2m_converters.runtime import apply_report, build_runtime_plan, make_write, register_result
 from zha_z2m_converters.runtime import register_with_zha, RuntimeEntity, RuntimeReport
 
@@ -580,6 +582,35 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(device.partial)
         self.assertEqual(device.unsupported_macros, ["gledoptoLight"])
         self.assertIn("light", [item.name for item in device.exposes])
+
+    def test_lumi_ota_extend_adds_gen_ota_output_cluster(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["LUMI"],
+            model: "LUMI",
+            vendor: "Lumi",
+            extend: [lumiZigbeeOTA()],
+        }];
+        """
+        device = parse_source(source, "lumi_ota.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.endpoint, item.cluster, item.direction) for item in device.endpoint_clusters],
+            [(1, "genOta", "output")],
+        )
+
+        plan = build_runtime_plan(device)
+        calls = []
+
+        class Builder:
+            def adds(self, cluster, **kwargs):
+                calls.append((cluster, kwargs))
+
+        fake_zcl = ModuleType("zigpy.zcl")
+        fake_zcl.ClusterType = type("ClusterType", (), {"Server": "server", "Client": "client"})
+        with patch.dict(sys.modules, {"zigpy": ModuleType("zigpy"), "zigpy.zcl": fake_zcl}):
+            self.assertTrue(_configure_endpoint_clusters(Builder(), plan))
+        self.assertEqual(calls, [(0x0019, {"cluster_type": "client", "endpoint_id": 1})])
 
     def test_fluent_exposes_and_simple_configure_are_recovered_safely(self) -> None:
         source = """

@@ -8,7 +8,7 @@ from typing import Any
 
 from .exporter import export_python
 from .coverage import CoverageReport, build_report, format_report
-from .model import ConfigureAction, DeviceDefinition, ParseResult
+from .model import ConfigureAction, DeviceDefinition, EndpointCluster, ParseResult
 from .parser import parse_path, parse_source
 from .runtime import (
     RuntimePlan,
@@ -88,6 +88,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
 __all__ = [
     "DeviceDefinition",
     "ConfigureAction",
+    "EndpointCluster",
     "CoverageReport",
     "ParseResult",
     "RuntimePlan",

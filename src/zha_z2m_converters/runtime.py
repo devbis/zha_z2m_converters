@@ -54,6 +54,7 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "door_lock": 0x0101,
     "manuSpecificTuya3": 0xE001,
     "manuSpecificTuya": 0xEF00,
+    "genOta": 0x0019,
 }
 
 ZHA_ATTRIBUTE_NAMES: dict[str, str] = {
@@ -104,6 +105,7 @@ class RuntimePlan:
     entities: list[RuntimeEntity] = field(default_factory=list)
     bindings: list[Binding] = field(default_factory=list)
     configure_actions: list[ConfigureAction] = field(default_factory=list)
+    endpoint_clusters: list[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -184,6 +186,7 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
         entities,
         [*normalized.from_zigbee, *normalized.to_zigbee],
         list(normalized.configure_actions),
+        list(normalized.endpoint_clusters),
     )
 
 
@@ -466,6 +469,7 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
         for signature in signatures:
             plan = build_runtime_plan(device, signature.get("manufacturerName"))
             builder = builder_factory(signature["manufacturerName"], signature["modelID"])
+            _configure_endpoint_clusters(builder, plan)
             _prevent_unrepresented_default_entities(builder, plan)
             _configure_builder_device_class(builder, plan.configure_actions)
             custom_clusters_ready = _configure_custom_clusters(builder, plan)
@@ -784,6 +788,25 @@ def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
             return False
         for endpoint in endpoints:
             replaces(cluster, endpoint_id=endpoint)
+    return True
+
+
+def _configure_endpoint_clusters(builder: Any, plan: RuntimePlan) -> bool:
+    """Apply declarative input/output cluster additions to existing endpoints."""
+    if not plan.endpoint_clusters:
+        return True
+    adds = getattr(builder, "adds", None)
+    if not callable(adds):
+        _LOGGER.warning("ZHA QuirkBuilder cannot add endpoint clusters")
+        return False
+    try:
+        from zigpy.zcl import ClusterType  # type: ignore
+    except ImportError:
+        return False
+    for item in plan.endpoint_clusters:
+        cluster_id = ZCL_CLUSTER_IDS.get(item.cluster, item.cluster) if isinstance(item.cluster, str) else item.cluster
+        cluster_type = ClusterType.Client if item.direction == "output" else ClusterType.Server
+        adds(cluster_id, cluster_type=cluster_type, endpoint_id=item.endpoint)
     return True
 
 

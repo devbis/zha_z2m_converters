@@ -78,6 +78,15 @@ class ConfigureAction:
     target: str = "coordinator"
 
 
+@dataclass(frozen=True)
+class EndpointCluster:
+    """Declarative cluster addition to an existing Zigbee endpoint."""
+
+    endpoint: int
+    cluster: str | int
+    direction: Literal["input", "output"] = "input"
+
+
 @dataclass
 class DeviceDefinition:
     manufacturer: str | None = None
@@ -90,6 +99,7 @@ class DeviceDefinition:
     to_zigbee: list[Binding] = field(default_factory=list)
     extends: list[str] = field(default_factory=list)
     configure_actions: list[ConfigureAction] = field(default_factory=list)
+    endpoint_clusters: list[EndpointCluster] = field(default_factory=list)
     conditional_extends: list[dict[str, Any]] = field(default_factory=list)
     unsupported_macros: list[str] = field(default_factory=list)
     unsupported_fields: list[str] = field(default_factory=list)
