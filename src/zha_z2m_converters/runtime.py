@@ -732,7 +732,7 @@ def _make_enum_class(expose: Expose) -> type[IntEnum] | None:
         while name in members:
             name = f"{name}_{index}"
         members[name] = index
-    return IntEnum(f"ZhaZhc_{expose.name}", members)
+    return IntEnum(f"ZhaZ2mConverters_{expose.name}", members)
 
 
 def _is_command_backed(plan: RuntimePlan, entity: RuntimeEntity) -> bool:

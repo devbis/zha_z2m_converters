@@ -4,8 +4,8 @@ import json
 import unittest
 from pathlib import Path
 
-from zha_zhc.coverage import build_report, format_report
-from zha_zhc.parser import parse_path
+from zha_z2m_converters.coverage import build_report, format_report
+from zha_z2m_converters.parser import parse_path
 
 
 class CoverageTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class CoverageTests(unittest.TestCase):
             exposes: [e.voltage()],
         }];
         """
-        from zha_zhc.parser import parse_source
+        from zha_z2m_converters.parser import parse_source
 
         report = build_report(parse_source(source, "pj1203a.ts"))
         self.assertEqual(report.usable_partial, 0)
@@ -57,7 +57,7 @@ class CoverageTests(unittest.TestCase):
             extend: [tuya.modernExtend.tuyaBase(), tuya.modernExtend.tuyaOnOff({onOffCountdown: true})],
         }];
         """
-        from zha_zhc.parser import parse_source
+        from zha_z2m_converters.parser import parse_source
 
         report = build_report(parse_source(source, "whd02.ts"))
         self.assertEqual(report.fully_supported, 1)
@@ -81,7 +81,7 @@ class CoverageTests(unittest.TestCase):
             extend: [m.unknownMacro()],
         }];
         """
-        from zha_zhc.parser import parse_source
+        from zha_z2m_converters.parser import parse_source
 
         text = format_report(build_report(parse_source(source, "macro_device.ts")))
         self.assertIn("unsupported extend macro: unknownMacro", text)

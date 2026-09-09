@@ -6,14 +6,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from zha_zhc.exporter import export_python
-from zha_zhc import _select_devices
-from zha_zhc.mapping import normalize_device
-from zha_zhc.parser import parse_path, parse_source
-from zha_zhc.model import ConfigureAction, Expose
-from zha_zhc.runtime import _apply_configure_actions, _apply_expose, _make_enum_class
-from zha_zhc.runtime import apply_report, build_runtime_plan, make_write, register_result
-from zha_zhc.runtime import register_with_zha, RuntimeEntity, RuntimeReport
+from zha_z2m_converters.exporter import export_python
+from zha_z2m_converters import _select_devices
+from zha_z2m_converters.mapping import normalize_device
+from zha_z2m_converters.parser import parse_path, parse_source
+from zha_z2m_converters.model import ConfigureAction, Expose
+from zha_z2m_converters.runtime import _apply_configure_actions, _apply_expose, _make_enum_class
+from zha_z2m_converters.runtime import apply_report, build_runtime_plan, make_write, register_result
+from zha_z2m_converters.runtime import register_with_zha, RuntimeEntity, RuntimeReport
 
 
 ROOT = Path(__file__).parent
@@ -254,7 +254,7 @@ class ParserTests(unittest.TestCase):
 
         register_with_zha(register_result(parse_source(source)), Builder)
         self.assertEqual(calls, [])
-        from zha_zhc.runtime import RuntimeEntity, _is_default_measurement_entity
+        from zha_z2m_converters.runtime import RuntimeEntity, _is_default_measurement_entity
 
         self.assertTrue(_is_default_measurement_entity(RuntimeEntity("power", "numeric", "power", "haElectricalMeasurement", "activePower")))
 
@@ -321,7 +321,7 @@ class ParserTests(unittest.TestCase):
             def add_to_registry(self):
                 pass
 
-        with patch("zha_zhc.runtime._tuya_datapoint_cluster", return_value=object()):
+        with patch("zha_z2m_converters.runtime._tuya_datapoint_cluster", return_value=object()):
             register_with_zha(register_result(parse_source(source)), Builder)
         self.assertEqual(len(replacements), 1)
         self.assertEqual([item[1]["attribute_name"] for item in entities], ["dp_1", "dp_2"])
@@ -403,8 +403,8 @@ class ParserTests(unittest.TestCase):
             def add_to_registry(self):
                 pass
 
-        with patch("zha_zhc.runtime._tuya_on_off_cluster", return_value=object()), patch(
-            "zha_zhc.runtime._tuya3_cluster", return_value=object()
+        with patch("zha_z2m_converters.runtime._tuya_on_off_cluster", return_value=object()), patch(
+            "zha_z2m_converters.runtime._tuya3_cluster", return_value=object()
         ):
             register_with_zha(register_result(parse_source(source)), Builder)
         self.assertEqual(calls, [("_TZ3000_46t1rvdu", "TS0001")])

@@ -1,6 +1,6 @@
 {
-  "domain": "zha_zhc",
-  "name": "ZHA Zigbee Herdsman Converters",
+  "domain": "zha_z2m_converters",
+  "name": "ZHA Zigbee2MQTT Converters",
   "version": "0.1.0",
   "documentation": "https://github.com/Koenkk/zigbee-herdsman-converters",
   "codeowners": [],

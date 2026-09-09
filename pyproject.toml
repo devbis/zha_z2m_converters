@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "zha-zigbee-herdsman-converters"
+name = "zha-z2m-converters"
 version = "0.1.0"
 description = "Safe declarative bridge from zigbee-herdsman-converters to ZHA"
 requires-python = ">=3.11"
@@ -17,11 +17,11 @@ parser = [
 test = ["pytest>=8"]
 
 [project.scripts]
-zha-zhc = "zha_zhc.cli:main"
-zha-zhc-coverage = "zha_zhc.coverage:main"
+zha-z2m-converters = "zha_z2m_converters.cli:main"
+zha-z2m-converters-coverage = "zha_z2m_converters.coverage:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-zha_zhc = ["py.typed", "manifest.json"]
+zha_z2m_converters = ["py.typed", "manifest.json"]

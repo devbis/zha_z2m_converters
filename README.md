@@ -1,4 +1,4 @@
-# zha-zigbee-herdsman-converters
+# zha-z2m-converters
 
 Safe declarative bridge between `zigbee-herdsman-converters` and ZHA.
 
@@ -9,7 +9,7 @@ regular Python module for ZHA.
 ## Quick start
 
 ```python
-from zha_zhc import load_source, parse_source, export_python
+from zha_z2m_converters import load_source, parse_source, export_python
 
 source = load_source("vendor/zigbee-herdsman-converters")
 result = parse_source(source.text, source.filename)
@@ -54,7 +54,7 @@ The runtime layer can build a controller-independent plan for basic ZHA
 bindings and process reports without a JavaScript runtime:
 
 ```python
-from zha_zhc import RuntimeReport, apply_report, build_runtime_plan, make_write
+from zha_z2m_converters import RuntimeReport, apply_report, build_runtime_plan, make_write
 
 plan = build_runtime_plan(device_definition)
 state = apply_report(plan, RuntimeReport("temperature_measurement", "measured_value", 2150))
@@ -111,12 +111,12 @@ behavior remain explicitly partial.
 ## Home Assistant installation
 
 The package can run as a Home Assistant custom integration. Copy the package
-to `custom_components/zha_zhc`, copy a converter snapshot to a readable path,
+to `custom_components/zha_z2m_converters`, copy a converter snapshot to a readable path,
 and add a YAML entry before starting Home Assistant:
 
 ```yaml
-zha_zhc:
-  source: /config/zha_zhc/converters/src/devices/tuya.ts
+zha_z2m_converters:
+  source: /config/zha_z2m_converters/converters/src/devices/tuya.ts
   devices:
     - manufacturer: _TZ3000_46t1rvdu
       model: TS0001
