@@ -11,25 +11,49 @@ TypeScript and does not require V8, Node.js, or another JavaScript runtime.
 ## Current coverage
 
 Coverage is measured against the bundled converter snapshot in
-`custom_components/zha_z2m_converters/converters/`. The numbers below are the
-current baseline and can change when the snapshot is updated.
+`custom_components/zha_z2m_converters/converters/`. The generated block below
+is refreshed from the snapshot by `scripts/update_readme_coverage.py`.
 
+<!-- coverage:start -->
 | Status | Definitions | Share | Meaning |
 |:---:|---:|---:|---|
-| ✅ Fully supported | **2,347** | **52.4%** | Static definition and all extracted features are supported. |
-| 🟡 Usable partial | **1,810** | **40.4%** | Some features are missing, but at least one reliable data path remains. |
+| ✅ Fully supported | **2,437** | **54.4%** | Static definition and all extracted features are supported. |
+| 🟡 Usable partial | **1,721** | **38.4%** | Some features are missing, but at least one reliable data path remains. |
 | 🟠 Metadata only | **10** | **0.2%** | Device metadata was recovered, but no usable entity or data binding exists. |
-| 🔴 Unusable partial | **307** | **6.9%** | The remaining functionality depends on unsupported converter logic or has no usable data path. |
+| 🔴 Unusable partial | **306** | **6.8%** | The remaining functionality depends on unsupported converter logic or has no usable data path. |
 | ⛔ Rejected | **4** | **0.1%** | The definition could not be recovered by the static parser. |
 | **Total** | **4,478** | **100%** | All definitions found in the snapshot, including rejected definitions. |
 
 ### At a glance
 
-- **4,157 definitions (92.8%)** have either full support or at least one usable
+- **4,158 definitions (92.9%)** have either full support or at least one usable
   supported data path.
-- **317 definitions** still need additional implementation or have no usable
+- **316 definitions** still need additional implementation or have no usable
   entity path (`metadata-only` + `unusable partial`).
 - **4 definitions** are currently rejected by the parser.
+<!-- coverage:end -->
+
+Update the generated coverage block manually:
+
+```shell
+python3 scripts/update_readme_coverage.py
+```
+
+To keep the block current before every commit, install the repository's
+pre-commit hook:
+
+```shell
+pip install pre-commit
+pre-commit install
+```
+
+The hook checks the generated block and rejects a commit when the bundled
+snapshot or parser results have changed. Run the update command, stage
+`README.md`, and commit again. You can also check all files explicitly:
+
+```shell
+pre-commit run --all-files
+```
 
 Run the report yourself:
 

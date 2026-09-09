@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: readme-coverage
+        name: Check README coverage table
+        entry: python3 scripts/update_readme_coverage.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
