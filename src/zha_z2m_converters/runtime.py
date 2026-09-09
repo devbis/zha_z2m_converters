@@ -309,6 +309,16 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
     )
     if datapoint_binding is not None:
         return datapoint_binding
+    lumi_basic_binding = next(
+        (
+            item
+            for item in bindings
+            if item.converter == f"lumi_basic_{expose.name}" and item.direction == "report"
+        ),
+        None,
+    )
+    if lumi_basic_binding is not None:
+        return lumi_basic_binding
     converter_aliases = {
         "contact": "lumi_contact",
         "co2": "lumi_co2",

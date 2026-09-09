@@ -48,6 +48,7 @@ CONVERTER_MAP: dict[str, tuple[str, str | None, str]] = {
     "lumi_co2": ("msCO2", "measuredValue", "report"),
     "lumi_pm25": ("pm25Measurement", "measuredValue", "report"),
     "lumi_power": ("genAnalogInput", "presentValue", "report"),
+    "lumi_basic": ("genBasic", None, "report"),
     "co2": ("msCO2", "measuredValue", "report"),
     "pm25": ("pm25Measurement", "measuredValue", "report"),
     "flow": ("msFlowMeasurement", "measuredValue", "report"),
@@ -148,6 +149,14 @@ CONVERTER_SCALES = {
     "flow": 10,
 }
 
+LUMI_BASIC_ATTRIBUTE_MAP = {
+    "device_temperature": (3, None),
+    "energy": (149, None),
+    "power": (152, None),
+    "voltage": (150, 10),
+    "current": (151, 1000),
+}
+
 
 def normalize_device(device: DeviceDefinition) -> DeviceDefinition:
     """Fill standard cluster bindings from expose and converter names."""
@@ -177,6 +186,25 @@ def normalize_device(device: DeviceDefinition) -> DeviceDefinition:
             )
         else:
             normalized_from.append(binding)
+    for binding in bindings:
+        if binding.converter.rsplit(".", 1)[-1] != "lumi_basic":
+            continue
+        for expose in exposes:
+            mapping = LUMI_BASIC_ATTRIBUTE_MAP.get(expose.name)
+            if mapping is None:
+                continue
+            attribute, divisor = mapping
+            expression = Expression("divide", (divisor,)) if divisor else None
+            normalized_from.append(
+                Binding(
+                    f"lumi_basic_{expose.name}",
+                    "genBasic",
+                    attribute,
+                    direction="report",
+                    endpoint=binding.endpoint,
+                    expression=expression,
+                )
+            )
     normalized_to = []
     for binding in device.to_zigbee:
         converter_name = binding.converter.rsplit(".", 1)[-1]

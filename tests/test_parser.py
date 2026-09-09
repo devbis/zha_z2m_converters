@@ -203,6 +203,30 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(apply_report(plan, RuntimeReport("msSoilMoisture", "measuredValue", 42)), {"soil_moisture": 42})
         self.assertEqual(apply_report(plan, RuntimeReport("msOccupancySensing", "pirOToUDelay", 90)), {"occupancy_timeout": 90})
 
+    def test_lumi_basic_exposes_use_fixed_attribute_paths(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Lumi plug",
+            vendor: "Aqara",
+            fromZigbee: [lumi.fromZigbee.lumi_basic],
+            exposes: [e.power(), e.energy(), e.voltage(), e.current(), e.device_temperature()],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-basic.ts").devices[0])
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute) for item in plan.entities],
+            [
+                ("power", "genBasic", 152),
+                ("energy", "genBasic", 149),
+                ("voltage", "genBasic", 150),
+                ("current", "genBasic", 151),
+                ("device_temperature", "genBasic", 3),
+            ],
+        )
+        self.assertEqual(apply_report(plan, RuntimeReport("genBasic", 152, 25)), {"power": 25})
+        self.assertEqual(apply_report(plan, RuntimeReport("genBasic", 150, 2300)), {"voltage": 230})
+        self.assertEqual(apply_report(plan, RuntimeReport("genBasic", 151, 1250)), {"current": 1.25})
+
     def test_standard_converter_aliases_are_normalized_to_zcl(self) -> None:
         source = """
         export const definitions = [{
