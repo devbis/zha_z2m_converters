@@ -294,9 +294,21 @@ class _ObjectParser:
         statements: list[Any] = []
         locals_: dict[str, Any] = {}
         unsupported = False
+        if self.constants is None:
+            self.constants = {}
         while self.current().value != "}":
             if self.current().value == ";":
                 self.take()
+                continue
+            if self.current().value == "for":
+                loop_start = self.index
+                try:
+                    loop_statements, loop_unsupported = self.parse_static_configure_loop()
+                    statements.extend(loop_statements)
+                    unsupported = unsupported or loop_unsupported
+                except UnsupportedSyntax:
+                    unsupported = True
+                    self.skip_to_object_boundary(loop_start, boundaries=(";", "}"))
                 continue
             statement_start = self.index
             try:
@@ -308,7 +320,9 @@ class _ObjectParser:
                     while self.current().value not in {"=", ";", "}"}:
                         self.take()
                     self.take("=")
-                    locals_[name.value] = self.parse_value()
+                    local_value = self.parse_value()
+                    locals_[name.value] = local_value
+                    self.constants[name.value] = local_value
                 else:
                     if self.current().value == "await":
                         self.take()
@@ -329,6 +343,93 @@ class _ObjectParser:
         if unsupported:
             value["__unsupported__"] = "configure"
         return value
+
+    def parse_static_configure_loop(self) -> tuple[list[Any], bool]:
+        """Expand a loop over a statically known list without evaluating JavaScript."""
+        self.take("for")
+        self.take("(")
+        declaration = self.take()
+        if declaration.value not in {"const", "let", "var"}:
+            raise UnsupportedSyntax("configure loop requires a variable declaration")
+        variable = self.take()
+        if variable.kind != "identifier" or self.take().value != "of":
+            raise UnsupportedSyntax("configure loop requires a static of expression")
+        values = self.parse_value()
+        self.take(")")
+        self.take("{")
+
+        body_start = self.index
+        depth = 1
+        while self.current().kind != "eof" and depth:
+            token = self.take()
+            if token.value == "{":
+                depth += 1
+            elif token.value == "}":
+                depth -= 1
+        if depth:
+            raise UnsupportedSyntax("unclosed configure loop")
+        body_end = self.index - 1
+        if not isinstance(values, list) or not values:
+            raise UnsupportedSyntax("configure loop iterable must be a non-empty static list")
+
+        statements: list[Any] = []
+        unsupported = False
+        body = self.tokens[body_start:body_end]
+        for item in values:
+            nested = _ObjectParser(body, constants={**(self.constants or {}), variable.value: item})
+            parsed = nested.parse_configure_statements()
+            statements.extend(parsed[0])
+            unsupported = unsupported or parsed[1]
+        return statements, unsupported
+
+    def parse_configure_statements(self) -> tuple[list[Any], bool]:
+        """Parse configure statements from a token slice until end-of-input."""
+        statements: list[Any] = []
+        locals_: dict[str, Any] = {}
+        unsupported = False
+        if self.constants is None:
+            self.constants = {}
+        while self.current().kind != "eof":
+            if self.current().value == ";":
+                self.take()
+                continue
+            if self.current().value == "for":
+                loop_start = self.index
+                try:
+                    loop_statements, loop_unsupported = self.parse_static_configure_loop()
+                    statements.extend(loop_statements)
+                    unsupported = unsupported or loop_unsupported
+                except UnsupportedSyntax:
+                    unsupported = True
+                    self.skip_to_object_boundary(loop_start, boundaries=(";",))
+                continue
+            statement_start = self.index
+            try:
+                if self.current().value in {"const", "let", "var"}:
+                    self.take()
+                    name = self.take()
+                    if name.kind != "identifier":
+                        raise UnsupportedSyntax("configure local name must be an identifier")
+                    while self.current().value not in {"=", ";"}:
+                        self.take()
+                    self.take("=")
+                    local_value = self.parse_value()
+                    locals_[name.value] = local_value
+                    self.constants[name.value] = local_value
+                else:
+                    if self.current().value == "await":
+                        self.take()
+                    statements.append(self.parse_value())
+                if self.current().value == ";":
+                    self.take()
+                elif self.current().kind != "eof":
+                    raise UnsupportedSyntax("configure statement must end with a semicolon")
+            except UnsupportedSyntax:
+                unsupported = True
+                self.skip_to_object_boundary(statement_start, boundaries=(";",))
+                if self.current().value == ";":
+                    self.take()
+        return statements, unsupported
 
     def looks_like_generic_call(self) -> bool:
         """Distinguish TypeScript generic calls from comparison operators."""

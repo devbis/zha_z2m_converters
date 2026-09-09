@@ -17,8 +17,8 @@ is refreshed from the snapshot by `scripts/update_readme_coverage.py`.
 <!-- coverage:start -->
 | Status | Definitions | Share | Meaning |
 |:---:|---:|---:|---|
-| ✅ Fully supported | **2,439** | **54.5%** | Static definition and all extracted features are supported. |
-| 🟡 Usable partial | **1,719** | **38.4%** | Some features are missing, but at least one reliable data path remains. |
+| ✅ Fully supported | **2,448** | **54.7%** | Static definition and all extracted features are supported. |
+| 🟡 Usable partial | **1,710** | **38.2%** | Some features are missing, but at least one reliable data path remains. |
 | 🟠 Metadata only | **10** | **0.2%** | Device metadata was recovered, but no usable entity or data binding exists. |
 | 🔴 Unusable partial | **306** | **6.8%** | The remaining functionality depends on unsupported converter logic or has no usable data path. |
 | ⛔ Rejected | **4** | **0.1%** | The definition could not be recovered by the static parser. |

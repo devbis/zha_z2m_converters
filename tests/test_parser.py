@@ -1082,6 +1082,53 @@ class ParserTests(unittest.TestCase):
             [(2, "genPowerCfg"), (2, "msTemperatureMeasurement")],
         )
 
+    def test_static_configure_loops_are_expanded_without_execution(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["LOOP"],
+            model: "Loop",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                for (const endpointId of [1, 2]) {
+                    const endpoint = device.getEndpoint(endpointId);
+                    await reporting.bind(endpoint, coordinatorEndpoint, ["genOnOff"]);
+                    await reporting.onOff(endpoint);
+                }
+            },
+        }];
+        """
+        device = parse_source(source, "configure-loop.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.operation, item.endpoint, item.cluster, item.attributes) for item in device.configure_actions],
+            [
+                ("bind", 1, "genOnOff", ()),
+                ("configure_reporting", 1, "genOnOff", ("onOff",)),
+                ("bind", 2, "genOnOff", ()),
+                ("configure_reporting", 2, "genOnOff", ("onOff",)),
+            ],
+        )
+
+    def test_static_endpoint_object_loops_are_expanded(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["ENDPOINT_OBJECTS"],
+            model: "Endpoint objects",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                for (const endpoint of [device.getEndpoint(1), device.getEndpoint(2)]) {
+                    await reporting.bind(endpoint, coordinatorEndpoint, ["genPowerCfg"]);
+                }
+            },
+        }];
+        """
+        device = parse_source(source, "configure-endpoint-loop.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.endpoint, item.cluster) for item in device.configure_actions],
+            [(1, "genPowerCfg"), (2, "genPowerCfg")],
+        )
+
     def test_indexed_endpoint_and_static_configure_locals_are_recovered(self) -> None:
         source = """
         export const definitions = [{
