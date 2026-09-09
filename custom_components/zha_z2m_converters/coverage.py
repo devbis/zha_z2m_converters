@@ -30,6 +30,7 @@ SUPPORTED_ENTITY_TYPES = {
     "text",
 }
 SUPPORTED_EXPOSE_TYPES = SUPPORTED_ENTITY_TYPES | set(EXPOSE_CLUSTER_MAP)
+DEFAULT_SOURCE = Path(__file__).resolve().parent / "converters" / "zigbee-herdsman-converters"
 
 
 @dataclass
@@ -207,7 +208,7 @@ def _append_section(lines: list[str], title: str, values: dict[str, int]) -> Non
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Show declarative converter coverage")
-    parser.add_argument("source", nargs="?", default="vendor/zigbee-herdsman-converters")
+    parser.add_argument("source", nargs="?", default=str(DEFAULT_SOURCE))
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     parser.add_argument("--problem-limit", type=int, default=50)
     args = parser.parse_args(argv)

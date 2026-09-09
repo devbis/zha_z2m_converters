@@ -10,8 +10,9 @@ TypeScript and does not require V8, Node.js, or another JavaScript runtime.
 
 ## Current coverage
 
-Coverage is measured against the converter snapshot in `vendor/`. The numbers
-below are the current baseline and can change when the snapshot is updated.
+Coverage is measured against the bundled converter snapshot in
+`custom_components/zha_z2m_converters/converters/`. The numbers below are the
+current baseline and can change when the snapshot is updated.
 
 | Status | Definitions | Share | Meaning |
 |:---:|---:|---:|---|
@@ -60,7 +61,9 @@ they can be represented safely as data or a constrained macro.
 ```python
 from zha_z2m_converters import export_python, load_source, parse_source
 
-source = load_source("vendor/zigbee-herdsman-converters")
+source = load_source(
+    "custom_components/zha_z2m_converters/converters/zigbee-herdsman-converters"
+)
 result = parse_source(source.text, source.filename)
 
 print(result.devices)
@@ -130,7 +133,6 @@ Copy a converter snapshot to a readable path, then configure the integration:
 
 ```yaml
 zha_z2m_converters:
-  source: /config/zha_z2m_converters/converters/src/devices/tuya.ts
   devices:
     - manufacturer: _TZ3000_46t1rvdu
       model: TS0001
@@ -138,9 +140,24 @@ zha_z2m_converters:
       model: TS011F
 ```
 
+The bundled converter snapshot is installed with the integration and is used
+automatically when `source` is omitted. Additional
+user-provided TypeScript definitions can be placed in:
+
+```text
+<Home Assistant config directory>/external_converters/
+```
+
+All `.ts` files in that directory are loaded together with the bundled
+snapshot. The component resolves this path through Home Assistant's actual
+configuration directory, so it is not tied to `/config`. The directory is
+outside `custom_components`, so HACS updates do not modify it. A custom
+`external_source` path can be configured when user converters are stored
+elsewhere.
+
 The `devices` list is optional and is useful while validating selected devices.
 Each entry may specify a manufacturer, a model, or both. If it is omitted, all
-definitions from the selected source file or directory are registered.
+definitions from the selected source paths are registered.
 
 The integration creates Python-side ZHA quirks through the installed
 `QuirkBuilder`. It does not run TypeScript or JavaScript.

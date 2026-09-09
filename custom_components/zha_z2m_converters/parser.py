@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .lexer import Token, tokenize
 from .mapping import CONVERTER_MAP
@@ -1899,13 +1899,19 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
 
 def parse_path(path: str | Path) -> ParseResult:
     """Parse every TypeScript device source in a file or converter snapshot."""
+    return parse_paths([path])
+
+
+def parse_paths(paths: Iterable[str | Path]) -> ParseResult:
+    """Parse and combine definitions from multiple converter source paths."""
     combined = ParseResult()
-    for source in load_sources(path):
-        result = parse_source(source.text, source.filename)
-        combined.source_files += 1
-        combined.devices.extend(result.devices)
-        combined.diagnostics.extend(result.diagnostics)
-        combined.rejected_details.extend(result.rejected_details)
-        combined.syntax_validated = combined.syntax_validated or result.syntax_validated
-        combined.rejected_definitions += result.rejected_definitions
+    for path in paths:
+        for source in load_sources(path):
+            result = parse_source(source.text, source.filename)
+            combined.source_files += 1
+            combined.devices.extend(result.devices)
+            combined.diagnostics.extend(result.diagnostics)
+            combined.rejected_details.extend(result.rejected_details)
+            combined.syntax_validated = combined.syntax_validated or result.syntax_validated
+            combined.rejected_definitions += result.rejected_definitions
     return combined

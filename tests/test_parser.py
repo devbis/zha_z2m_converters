@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import tempfile
 from types import ModuleType
 import unittest
 from pathlib import Path
@@ -11,7 +12,7 @@ from unittest.mock import patch
 from zha_z2m_converters.exporter import export_python
 from zha_z2m_converters import _select_devices
 from zha_z2m_converters.mapping import normalize_device
-from zha_z2m_converters.parser import parse_path, parse_source
+from zha_z2m_converters.parser import parse_path, parse_paths, parse_source
 from zha_z2m_converters.model import ConfigureAction, Expose
 from zha_z2m_converters.runtime import _apply_configure_actions, _apply_expose, _configure_endpoint_clusters, _make_enum_class
 from zha_z2m_converters.runtime import apply_report, build_runtime_plan, make_write, register_result
@@ -621,7 +622,16 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(apply_report(plan, RuntimeReport("haElectricalMeasurement", "activePower", 42)), {"power": 42})
 
     def test_tuya_on_off_conditional_options_are_expanded_per_fingerprint(self) -> None:
-        source = (ROOT.parent / "vendor" / "zigbee-herdsman-converters" / "src" / "devices" / "tuya.ts").read_text()
+        source = (
+            ROOT.parent
+            / "custom_components"
+            / "zha_z2m_converters"
+            / "converters"
+            / "zigbee-herdsman-converters"
+            / "src"
+            / "devices"
+            / "tuya.ts"
+        ).read_text()
         result = parse_source(source, "tuya.ts")
         device = next(item for item in result.devices if item.model == "TS011F_plug_1")
         self.assertEqual(device.unsupported_fields, ["configure"])
@@ -1052,6 +1062,22 @@ class ParserTests(unittest.TestCase):
         result = parse_path(ROOT / "fixtures")
         self.assertEqual(len(result.devices), 3)
         self.assertEqual({device.model for device in result.devices}, {"Test Plug", "Unsafe", "Modern Light"})
+
+    def test_multiple_source_paths_are_combined(self) -> None:
+        definition = """
+        export const definitions = [{
+            model: "External device",
+            vendor: "External",
+            exposes: [e.battery()],
+        }];
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "external.ts"
+            path.write_text(definition, encoding="utf-8")
+            result = parse_paths([ROOT / "fixtures" / "simple_device.ts", path])
+
+        self.assertEqual(result.source_files, 2)
+        self.assertEqual({device.model for device in result.devices}, {"Test Plug", "External device"})
 
 
 if __name__ == "__main__":

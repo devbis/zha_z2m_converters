@@ -9,7 +9,7 @@ from typing import Any
 from .exporter import export_python
 from .coverage import CoverageReport, build_report, format_report
 from .model import ConfigureAction, DeviceDefinition, EndpointCluster, ParseResult
-from .parser import parse_path, parse_source
+from .parser import parse_path, parse_paths, parse_source
 from .runtime import (
     RuntimePlan,
     RuntimeReport,
@@ -24,7 +24,16 @@ from .source import SourceFile, load_source, load_sources
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "zha_z2m_converters"
-DEFAULT_SOURCE = "/config/zha_z2m_converters/converters"
+COMPONENT_DIR = Path(__file__).resolve().parent
+DEFAULT_SOURCE = COMPONENT_DIR / "converters" / "zigbee-herdsman-converters"
+DEFAULT_EXTERNAL_SOURCE = "external_converters"
+
+
+def _contains_typescript(path: Path) -> bool:
+    """Return whether a source path contains at least one TypeScript file."""
+    if path.is_file():
+        return path.suffix == ".ts"
+    return path.is_dir() and any(path.rglob("*.ts"))
 
 
 def _select_devices(devices: list[DeviceDefinition], selectors: Any) -> list[DeviceDefinition]:
@@ -78,11 +87,21 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
     if not source.exists():
         _LOGGER.error("Converter source directory does not exist: %s", source)
         return False
-    result = await hass.async_add_executor_job(parse_path, source)
+    sources = [source]
+    configured_external_source = domain_config.get("external_source")
+    if configured_external_source:
+        external_source = Path(configured_external_source)
+        if not external_source.is_absolute():
+            external_source = Path(hass.config.path(str(external_source)))
+    else:
+        external_source = Path(hass.config.path(DEFAULT_EXTERNAL_SOURCE))
+    if external_source != source and _contains_typescript(external_source):
+        sources.append(external_source)
+    result = await hass.async_add_executor_job(parse_paths, sources)
     result.devices = _select_devices(result.devices, domain_config.get("devices"))
     registry = register_result(result)
     await hass.async_add_executor_job(register_with_zha, registry)
-    _LOGGER.info("Registered %d declarative converter definitions from %s", len(registry.devices), source)
+    _LOGGER.info("Registered %d declarative converter definitions from %s", len(registry.devices), ", ".join(map(str, sources)))
     return True
 
 __all__ = [
@@ -104,6 +123,7 @@ __all__ = [
     "load_sources",
     "make_write",
     "parse_path",
+    "parse_paths",
     "parse_source",
     "register_result",
     "register_with_zha",

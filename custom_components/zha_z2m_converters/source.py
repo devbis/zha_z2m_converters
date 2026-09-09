@@ -22,7 +22,7 @@ def load_sources(path: str | Path) -> list[SourceFile]:
         raise FileNotFoundError(source_path)
     candidates = sorted((source_path / "src" / "devices").glob("*.ts"))
     if not candidates:
-        candidates = sorted(source_path.glob("*.ts"))
+        candidates = sorted(source_path.rglob("*.ts"))
     if not candidates:
         raise FileNotFoundError(f"no TypeScript source found under {source_path}")
     return [SourceFile(str(candidate), candidate.read_text(encoding="utf-8"), source_path) for candidate in candidates]
