@@ -9,7 +9,7 @@ import math
 from typing import Any
 
 from .mapping import normalize_device
-from .model import Binding, ConfigureAction, DeviceDefinition, Diagnostic, Expose, Expression, ParseResult
+from .model import Binding, ConfigureAction, CustomClusterSpec, DeviceDefinition, Diagnostic, Expose, Expression, ParseResult
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -125,6 +125,7 @@ class RuntimePlan:
     configure_actions: list[ConfigureAction] = field(default_factory=list)
     endpoint_clusters: list[Any] = field(default_factory=list)
     custom_clusters: list[str] = field(default_factory=list)
+    custom_cluster_specs: list[CustomClusterSpec] = field(default_factory=list)
 
 
 @dataclass
@@ -251,6 +252,7 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
         list(normalized.configure_actions),
         list(normalized.endpoint_clusters),
         list(normalized.custom_clusters),
+        list(normalized.custom_cluster_specs),
     )
 
 
@@ -931,27 +933,45 @@ def _is_command_backed(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
 
 
 def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
-    return _is_command_backed(plan, entity) or any(
-        binding.converter.startswith("tuya_dp.") and _same_cluster(binding.cluster, entity.cluster)
-        for binding in plan.bindings
-    ) or (
-        entity.cluster in {"genOnOff", "manuSpecificTuya3", "manuSpecificTuya", "manuSpecificTuya4"}
-        and entity.attribute in {
-            "moesStartUpOnOff",
-            "powerOnBehavior",
-            "switchType",
-            "tuyaBacklightMode",
-            "tuyaBacklightSwitch",
-            "powerOnBehavior3",
-            "childLock",
-        }
+    return (
+        any(_same_cluster(entity.cluster, spec.name) for spec in plan.custom_cluster_specs)
+        or _is_command_backed(plan, entity)
+        or any(
+            binding.converter.startswith("tuya_dp.") and _same_cluster(binding.cluster, entity.cluster)
+            for binding in plan.bindings
+        )
+        or (
+            entity.cluster in {"genOnOff", "manuSpecificTuya3", "manuSpecificTuya", "manuSpecificTuya4"}
+            and entity.attribute in {
+                "moesStartUpOnOff",
+                "powerOnBehavior",
+                "switchType",
+                "tuyaBacklightMode",
+                "tuyaBacklightSwitch",
+                "powerOnBehavior3",
+                "childLock",
+            }
+        )
     )
 
 
 def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
     """Install the small Python-only custom clusters required by Tuya entities."""
     required: dict[Any, set[Any]] = {}
-    if "manuSpecificTuya4" in plan.custom_clusters or any(entity.cluster == "manuSpecificTuya4" for entity in plan.entities):
+    for spec in plan.custom_cluster_specs:
+        try:
+            cluster_factory = _custom_cluster_factory(spec)
+        except (ImportError, AttributeError, TypeError, ValueError):
+            return False
+        endpoints = {
+            entity.endpoint or 1
+            for entity in plan.entities
+            if _same_cluster(entity.cluster, spec.name)
+        }
+        required.setdefault(cluster_factory, set()).update(endpoints or {1})
+    if "manuSpecificTuya4" in plan.custom_clusters or any(
+        entity.cluster == "manuSpecificTuya4" for entity in plan.entities
+    ):
         # Tuya's common private cluster is used as a control cluster on the
         # primary endpoint, including multi-endpoint switches.
         required.setdefault(_tuya4_cluster, set()).add(1)
@@ -979,6 +999,85 @@ def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
         for endpoint in endpoints:
             replaces(cluster, endpoint_id=endpoint)
     return True
+
+
+def _custom_cluster_factory(spec: CustomClusterSpec) -> Any:
+    """Build a ZHA cluster class from a static converter cluster schema."""
+    import zigpy.types as t  # type: ignore
+    from zigpy.zcl.foundation import BaseAttributeDefs, BaseCommandDefs, ZCLAttributeDef, ZCLCommandDef  # type: ignore
+    from zhaquirks.clusters import CustomCluster  # type: ignore
+
+    from zigpy.zcl.clusters import closures, general, hvac, lighting, measurement  # type: ignore
+
+    standard_bases: dict[int, Any] = {}
+    for cluster_id, module, class_name in (
+        (0x0000, general, "Basic"),
+        (0x0001, general, "PowerConfiguration"),
+        (0x0004, general, "Groups"),
+        (0x0005, general, "Scenes"),
+        (0x0006, general, "OnOff"),
+        (0x0008, general, "LevelControl"),
+        (0x0101, closures, "DoorLock"),
+        (0x0102, closures, "WindowCovering"),
+        (0x0201, hvac, "Thermostat"),
+        (0x0202, hvac, "FanControl"),
+        (0x0204, hvac, "UserInterfaceCfg"),
+        (0x0300, lighting, "Color"),
+        (0x0400, measurement, "IlluminanceMeasurement"),
+        (0x0402, measurement, "TemperatureMeasurement"),
+        (0x0403, measurement, "PressureMeasurement"),
+        (0x0405, measurement, "RelativeHumidity"),
+        (0x0406, measurement, "OccupancySensing"),
+    ):
+        cluster_class = getattr(module, class_name, None)
+        if cluster_class is not None:
+            standard_bases[cluster_id] = cluster_class
+    base = standard_bases.get(spec.cluster_id, CustomCluster)
+    if base is CustomCluster:
+        cluster_bases = (CustomCluster,)
+        base_attribute_defs = BaseAttributeDefs
+        base_command_defs = BaseCommandDefs
+    else:
+        cluster_bases = (base, CustomCluster)
+        base_attribute_defs = getattr(base, "AttributeDefs", BaseAttributeDefs)
+        base_command_defs = getattr(base, "ServerCommandDefs", BaseCommandDefs)
+
+    zcl_types = {name: getattr(t, name) for name in {
+        item["type"] for item in spec.attributes
+    } | {
+        parameter["type"]
+        for command in spec.commands
+        for parameter in command["parameters"]
+    }}
+    attribute_defs = {
+        item["name"]: ZCLAttributeDef(
+            id=item["id"],
+            type=zcl_types[item["type"]],
+            access="rw" if item["write"] else "r",
+        )
+        for item in spec.attributes
+    }
+    command_defs = {
+        item["name"]: ZCLCommandDef(
+            id=item["id"],
+            schema={parameter["name"]: zcl_types[parameter["type"]] for parameter in item["parameters"]},
+        )
+        for item in spec.commands
+    }
+    attributes = type("AttributeDefs", (base_attribute_defs,), attribute_defs)
+    commands = type("ServerCommandDefs", (base_command_defs,), command_defs)
+    class_name = "ZhaZ2mConverters_" + "".join(part.capitalize() for part in spec.name.split("_"))
+    return type(
+        class_name,
+        cluster_bases,
+        {
+            "cluster_id": spec.cluster_id,
+            "name": spec.name,
+            "ep_attribute": spec.name,
+            "AttributeDefs": attributes,
+            "ServerCommandDefs": commands,
+        },
+    )
 
 
 def _configure_endpoint_clusters(builder: Any, plan: RuntimePlan) -> bool:

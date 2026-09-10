@@ -960,6 +960,32 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.custom_clusters, ["manuSpecificTuya4"])
         self.assertEqual(build_runtime_plan(device).custom_clusters, ["manuSpecificTuya4"])
 
+    def test_literal_custom_cluster_schema_is_declarative(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["CUSTOM"],
+            model: "CUSTOM",
+            vendor: "Example",
+            extend: [m.deviceAddCustomCluster("customCluster", {
+                name: "customCluster",
+                ID: 0xfc00,
+                attributes: {
+                    level: {name: "level", ID: 1, type: Zcl.DataType.UINT16, write: true},
+                },
+                commands: {
+                    reset: {name: "reset", ID: 2, parameters: []},
+                },
+                commandsResponse: {},
+            })],
+        }];
+        """
+        device = parse_source(source, "custom-cluster.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.unsupported_macros, [])
+        self.assertEqual(device.custom_cluster_specs[0].name, "customCluster")
+        self.assertEqual(device.custom_cluster_specs[0].cluster_id, 0xFC00)
+        self.assertEqual(device.custom_cluster_specs[0].attributes[0]["type"], "uint16_t")
+
     def test_tuya_inching_switch_is_expanded_into_writable_entities(self) -> None:
         source = """
         export const definitions = [{

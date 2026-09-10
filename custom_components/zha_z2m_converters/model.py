@@ -87,6 +87,16 @@ class EndpointCluster:
     direction: Literal["input", "output"] = "input"
 
 
+@dataclass(frozen=True)
+class CustomClusterSpec:
+    """Static custom-cluster schema extracted from a converter definition."""
+
+    name: str
+    cluster_id: int
+    attributes: tuple[dict[str, Any], ...] = ()
+    commands: tuple[dict[str, Any], ...] = ()
+
+
 @dataclass
 class DeviceDefinition:
     manufacturer: str | None = None
@@ -101,6 +111,7 @@ class DeviceDefinition:
     configure_actions: list[ConfigureAction] = field(default_factory=list)
     endpoint_clusters: list[EndpointCluster] = field(default_factory=list)
     custom_clusters: list[str] = field(default_factory=list)
+    custom_cluster_specs: list[CustomClusterSpec] = field(default_factory=list)
     conditional_extends: list[dict[str, Any]] = field(default_factory=list)
     unsupported_macros: list[str] = field(default_factory=list)
     unsupported_fields: list[str] = field(default_factory=list)

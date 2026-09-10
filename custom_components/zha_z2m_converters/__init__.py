@@ -8,7 +8,7 @@ from typing import Any
 
 from .exporter import export_python
 from .coverage import CoverageReport, build_report, format_report
-from .model import ConfigureAction, DeviceDefinition, EndpointCluster, ParseResult
+from .model import ConfigureAction, CustomClusterSpec, DeviceDefinition, EndpointCluster, ParseResult
 from .parser import parse_path, parse_paths, parse_source
 from .runtime import (
     RuntimePlan,
@@ -108,6 +108,7 @@ __all__ = [
     "DeviceDefinition",
     "ConfigureAction",
     "EndpointCluster",
+    "CustomClusterSpec",
     "CoverageReport",
     "ParseResult",
     "RuntimePlan",

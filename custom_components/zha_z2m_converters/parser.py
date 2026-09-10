@@ -11,7 +11,17 @@ from typing import Any, Iterable
 
 from .lexer import Token, tokenize
 from .mapping import CONVERTER_MAP
-from .model import Binding, ConfigureAction, DeviceDefinition, Diagnostic, EndpointCluster, Expose, Expression, ParseResult
+from .model import (
+    Binding,
+    ConfigureAction,
+    CustomClusterSpec,
+    DeviceDefinition,
+    Diagnostic,
+    EndpointCluster,
+    Expose,
+    Expression,
+    ParseResult,
+)
 from .source import load_sources
 
 
@@ -760,6 +770,52 @@ _SUPPORTED_METADATA_MACROS = {
     "bindCluster",
     "lumiZigbeeOTA",
 }
+_STATIC_CLUSTER_IDS = {
+    "genBasic": 0x0000,
+    "genPowerCfg": 0x0001,
+    "genDeviceTempCfg": 0x0002,
+    "genIdentify": 0x0003,
+    "genGroups": 0x0004,
+    "genScenes": 0x0005,
+    "genOnOff": 0x0006,
+    "genLevelCtrl": 0x0008,
+    "genBinaryInput": 0x001F,
+    "genAnalogInput": 0x000C,
+    "lightingColorCtrl": 0x0300,
+    "closuresDoorLock": 0x0101,
+    "closuresWindowCovering": 0x0102,
+    "hvacThermostat": 0x0201,
+    "hvacFanCtrl": 0x0202,
+    "hvacUserInterfaceCfg": 0x0204,
+    "msTemperatureMeasurement": 0x0402,
+    "msPressureMeasurement": 0x0403,
+    "msRelativeHumidity": 0x0405,
+    "msOccupancySensing": 0x0406,
+    "msCO2": 0x040D,
+    "pm25Measurement": 0x042A,
+    "ssIasZone": 0x0500,
+    "seMetering": 0x0702,
+    "haElectricalMeasurement": 0x0B04,
+}
+_STATIC_ZCL_TYPES = {
+    "BOOL": "Bool",
+    "BOOLEAN": "Bool",
+    "BITMAP8": "bitmap8",
+    "BITMAP16": "bitmap16",
+    "ENUM8": "enum8",
+    "ENUM16": "enum16",
+    "UINT8": "uint8_t",
+    "UINT16": "uint16_t",
+    "UINT32": "uint32_t",
+    "UINT64": "uint64_t",
+    "INT8": "int8s",
+    "INT16": "int16s",
+    "INT32": "int32s",
+    "INT64": "int64s",
+    "CHAR_STR": "CharacterString",
+    "LONG_CHAR_STR": "LongCharacterString",
+    "BUFFER": "LVBytes",
+}
 
 
 def _static_text(value: Any) -> str | None:
@@ -780,6 +836,75 @@ def _static_value(value: Any) -> str | int | float | None:
     if isinstance(value, dict) and isinstance(value.get("ID"), dict):
         return _static_text(value["ID"])
     return None
+
+
+def _static_cluster_id(value: Any) -> int | None:
+    """Resolve a literal cluster ID or a standard ZCL cluster ID reference."""
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 0xFFFF:
+        return value
+    identifier = _identifier(value)
+    if identifier:
+        parts = identifier.split(".")
+        if len(parts) >= 2 and parts[-1] == "ID":
+            return _STATIC_CLUSTER_IDS.get(parts[-2])
+    return None
+
+
+def _static_zcl_type(value: Any) -> str | None:
+    """Resolve the subset of zigpy data types representable without JS."""
+    identifier = _identifier(value)
+    if identifier is None:
+        return None
+    return _STATIC_ZCL_TYPES.get(identifier.rsplit(".", 1)[-1].upper())
+
+
+def _custom_cluster_spec(call: Any) -> CustomClusterSpec | None:
+    """Parse a literal deviceAddCustomCluster schema into the IR."""
+    call_name = _call_name(call) if isinstance(call, dict) else None
+    if call_name is None or call_name.rsplit(".", 1)[-1] != "deviceAddCustomCluster":
+        return None
+    args = call.get("args")
+    if not isinstance(args, list) or len(args) != 2:
+        return None
+    name = _static_text(args[0])
+    definition = args[1]
+    cluster_id = _static_cluster_id(definition.get("ID") if isinstance(definition, dict) else None)
+    if not name or cluster_id is None or not isinstance(definition, dict):
+        return None
+    raw_attributes = definition.get("attributes", {})
+    raw_commands = definition.get("commands", {})
+    if not isinstance(raw_attributes, dict) or not isinstance(raw_commands, dict):
+        return None
+    attributes: list[dict[str, Any]] = []
+    for key, raw_attribute in raw_attributes.items():
+        if not isinstance(key, str) or not isinstance(raw_attribute, dict):
+            return None
+        attribute_name = _static_text(raw_attribute.get("name")) or key
+        attribute_id = _static_value(raw_attribute.get("ID"))
+        data_type = _static_zcl_type(raw_attribute.get("type"))
+        if not attribute_name or not isinstance(attribute_id, int) or isinstance(attribute_id, bool) or data_type is None:
+            return None
+        attributes.append({"name": attribute_name, "id": attribute_id, "type": data_type, "write": raw_attribute.get("write") is True})
+    commands: list[dict[str, Any]] = []
+    for key, raw_command in raw_commands.items():
+        if not isinstance(key, str) or not isinstance(raw_command, dict):
+            return None
+        command_name = _static_text(raw_command.get("name")) or key
+        command_id = _static_value(raw_command.get("ID"))
+        parameters = raw_command.get("parameters", [])
+        if not command_name or not isinstance(command_id, int) or isinstance(command_id, bool) or not isinstance(parameters, list):
+            return None
+        parsed_parameters: list[dict[str, str]] = []
+        for parameter in parameters:
+            if not isinstance(parameter, dict):
+                return None
+            parameter_name = _static_text(parameter.get("name"))
+            data_type = _static_zcl_type(parameter.get("type"))
+            if not parameter_name or data_type is None:
+                return None
+            parsed_parameters.append({"name": parameter_name, "type": data_type})
+        commands.append({"name": command_name, "id": command_id, "parameters": parsed_parameters})
+    return CustomClusterSpec(name, cluster_id, tuple(attributes), tuple(commands))
 
 
 def _endpoint_map(value: Any) -> dict[str, int]:
@@ -1067,6 +1192,8 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         name = "onOff"
     if name in _SUPPORTED_METADATA_MACROS:
         return [], [], name, True
+    if name == "deviceAddCustomCluster":
+        return [], [], name, _custom_cluster_spec(call) is not None
     if name == "addTuyaCommonPrivateCluster":
         # The cluster schema is fixed in lib/tuya.ts. Keep this macro separate
         # from generic custom-cluster parsing until a declarative schema path
@@ -2189,6 +2316,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
     configure_actions, configure_unsupported = _configure_actions(raw.get("configure"))
     endpoint_clusters: list[EndpointCluster] = []
     custom_clusters: list[str] = []
+    custom_cluster_specs: list[CustomClusterSpec] = []
     extends: list[str] = []
     unsupported_macros: list[str] = []
     conditional_extends: list[dict[str, Any]] = []
@@ -2226,6 +2354,9 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
                 configure_actions.append(ConfigureAction("bind", 1, "genBasic"))
         if name == "addTuyaCommonPrivateCluster":
             custom_clusters.append("manuSpecificTuya4")
+        custom_cluster_spec = _custom_cluster_spec(item)
+        if custom_cluster_spec is not None:
+            custom_cluster_specs.append(custom_cluster_spec)
         if name == "tuyaOnOff":
             args = _call_args(item)
             endpoint_names = args.get("endpoints")
@@ -2289,6 +2420,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
         configure_actions=configure_actions,
         endpoint_clusters=endpoint_clusters,
         custom_clusters=custom_clusters,
+        custom_cluster_specs=custom_cluster_specs,
         conditional_extends=conditional_extends,
         unsupported_macros=unsupported_macros,
         unsupported_fields=unsupported_fields,
