@@ -8,10 +8,10 @@ the safe declarative translation to ZHA.
 
 | Status | Definitions | Share |
 |---|---:|---:|
-| Fully supported | 2,550 | 56.9% |
-| Usable partial | 1,615 | 36.1% |
+| Fully supported | 2,553 | 57.0% |
+| Usable partial | 1,634 | 36.5% |
 | Metadata only | 11 | 0.2% |
-| Unusable partial | 298 | 6.7% |
+| Unusable partial | 276 | 6.2% |
 | Rejected | 4 | 0.1% |
 | **Total** | **4,478** | **100%** |
 
@@ -20,9 +20,9 @@ the safe declarative translation to ZHA.
 | Problem | Definitions |
 |---|---:|
 | unsupported converter binding | 836 |
-| unsupported extend macro | 631 |
+| unsupported extend macro | 628 |
 | dynamic expose or other expression | 306 |
-| no usable data path | 298 |
+| no usable data path | 276 |
 | unsupported definition field | 140 |
 
 ### Unsupported extend macros
@@ -37,7 +37,6 @@ the safe declarative translation to ZHA.
 | `lockExtend` | 26 |
 | `commandsWindowCovering` | 24 |
 | `addLegrandDevicesCluster` | 24 |
-| `lumiOnOff` | 24 |
 | `poll` | 23 |
 | `acConnected` | 23 |
 | `lumiLight` | 23 |
@@ -49,7 +48,8 @@ the safe declarative translation to ZHA.
 | `mode` | 22 |
 | `zbFanSpeed` | 22 |
 | `fanSpeed` | 22 |
-| *694 more items* | — |
+| `smartFanSpeed` | 22 |
+| *674 more items* | — |
 
 ### Unsupported converter bindings
 
@@ -155,11 +155,11 @@ Categories can overlap when one definition has several different gaps.
 | `utils.attachOutputCluster` | 5 |
 | `m.setupAttributes` | 4 |
 | `utils.sleep` | 3 |
-| `heiman.configureReporting.pm10measuredValue` | 2 |
 | `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
+| `heiman.configureReporting.pm10measuredValue` | 2 |
 | `heiman.configureReporting.aqiMeasuredValue` | 2 |
-| `heiman.configureReporting.pm25MeasuredValue` | 2 |
 | `heiman.configureReporting.batteryState` | 2 |
+| `heiman.configureReporting.pm25MeasuredValue` | 2 |
 | `syncTime` | 2 |
 | `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
@@ -185,8 +185,8 @@ Categories can overlap when one definition has several different gaps.
 | `reporting.co2` | 1 |
 | `reporting.onOff` | 1 |
 | `reporting.thermostatTemperature` | 1 |
-| `reporting.thermostatOccupiedHeatingSetpoint` | 1 |
 | `reporting.thermostatPIHeatingDemand` | 1 |
+| `reporting.thermostatOccupiedHeatingSetpoint` | 1 |
 
 ### Configure: direct or unsupported configure expression
 

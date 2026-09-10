@@ -376,18 +376,21 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
     if lumi_basic_binding is not None:
         return lumi_basic_binding
     converter_aliases = {
-        "contact": "lumi_contact",
-        "co2": "lumi_co2",
-        "pm25": "lumi_pm25",
-        "power": "lumi_power",
+        "contact": ("lumi_contact",),
+        "co2": ("lumi_co2",),
+        "pm25": ("lumi_pm25",),
+        "power": ("lumi_power", "lumiPower"),
+        "energy": ("lumiElectricityMeter_energy",),
+        "voltage": ("lumiElectricityMeter_voltage",),
+        "current": ("lumiElectricityMeter_current",),
     }
-    converter_alias = converter_aliases.get(expose.name)
-    if converter_alias is not None:
+    converter_alias = converter_aliases.get(expose.name, ())
+    if converter_alias:
         specialized_binding = next(
             (
                 item
                 for item in bindings
-                if item.converter.rsplit(".", 1)[-1] == converter_alias and item.direction == "report"
+                if item.converter.rsplit(".", 1)[-1] in converter_alias and item.direction == "report"
             ),
             None,
         )
@@ -398,20 +401,29 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
             "lumi_switch_operation_mode_opple",
             "lumi_operation_mode_opple",
             "lumi_switch_operation_mode_basic",
+            "lumiOperationMode",
         ),
-        "flip_indicator_light": ("lumi_flip_indicator_light",),
-        "led_disabled_night": ("lumi_led_disabled_night",),
-        "mode_switch": ("lumi_switch_mode_switch",),
-        "power_outage_memory": ("lumi_switch_power_outage_memory",),
-        "switch_type": ("lumi_switch_type",),
+        "flip_indicator_light": ("lumi_flip_indicator_light", "lumiFlipIndicatorLight"),
+        "led_disabled_night": ("lumi_led_disabled_night", "lumiLedDisabledNight"),
+        "mode_switch": ("lumi_switch_mode_switch", "lumiSwitchMode"),
+        "power_outage_memory": ("lumi_switch_power_outage_memory", "lumiPowerOutageMemory", "lumiPowerOnBehavior"),
+        "power_on_behavior": ("lumiPowerOnBehavior",),
+        "power_outage_count": ("lumi_power_outage_count",),
+        "switch_type": ("lumi_switch_type", "lumiSwitchType"),
         "button_switch_mode": ("lumi_button_switch_mode",),
-        "button_lock": ("lumi_socket_button_lock",),
+        "button_lock": ("lumi_socket_button_lock", "lumiButtonLock"),
+        "child_lock": ("lumiChildLock",),
+        "lock_relay": ("lumiLockRelay",),
         "auto_off": ("lumi_auto_off",),
         "motion_sensitivity": ("lumi_motion_sensitivity",),
-        "click_mode": ("lumi_switch_click_mode",),
+        "click_mode": ("lumi_switch_click_mode", "lumiClickMode"),
         "selftest": ("lumi_selftest",),
-        "overload_protection": ("lumi_overload_protection",),
+        "overload_protection": ("lumi_overload_protection", "lumiOverloadProtection"),
         "detection_interval": ("lumi_detection_interval",),
+        "dimming_range_minimum": ("lumiDimmingRangeMin",),
+        "dimming_range_maximum": ("lumiDimmingRangeMax",),
+        "off_on_duration": ("lumiOffOnDuration",),
+        "on_off_duration": ("lumiOnOffDuration",),
     }
     lumi_converter_alias = lumi_converter_aliases.get(expose.name, ())
     lumi_binding = next(
@@ -529,6 +541,10 @@ def _evaluate_expression(value: Any, expression: Expression | None) -> Any:
         divisor = expression.args[0]
         if isinstance(value, (int, float)) and isinstance(divisor, (int, float)) and divisor != 0:
             return value / divisor
+    if expression.op == "subtract" and expression.args:
+        amount = expression.args[0]
+        if isinstance(value, (int, float)) and isinstance(amount, (int, float)):
+            return value - amount
     if expression.op == "map_range" and len(expression.args) == 4:
         raw_min, raw_max, exposed_min, exposed_max = expression.args
         if isinstance(value, (int, float)) and raw_max != raw_min:

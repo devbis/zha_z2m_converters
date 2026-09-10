@@ -348,6 +348,93 @@ class ParserTests(unittest.TestCase):
             {"operation_mode": "control_relay"},
         )
 
+    def test_lumi_simple_modern_extends_are_static(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi",
+            vendor: "Aqara",
+            extend: [
+                lumi.lumiModernExtend.lumiButtonLock(),
+                lumi.lumiModernExtend.lumiPowerOutageMemory(),
+                lumi.lumiModernExtend.lumiClickMode({attribute: {ID: 0x0286, type: 0x20}}),
+                lumi.lumiModernExtend.lumiSwitchMode(),
+                lumi.lumiModernExtend.lumiDimmingRangeMin(),
+                lumi.lumiModernExtend.lumiOffOnDuration(),
+                lumi.lumiModernExtend.lumiOverloadProtection({valueMax: 3250, access: "STATE_SET"}),
+            ],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-modern-simple.ts").devices[0])
+        self.assertEqual(
+            [(item.property, item.attribute, item.access) for item in plan.entities],
+            [
+                ("button_lock", 0x0200, ("state", "set")),
+                ("power_outage_memory", 0x0201, ("state", "set")),
+                ("click_mode", 0x0286, ("state", "set")),
+                ("mode_switch", 0x0004, ("state", "set")),
+                ("dimming_range_minimum", 0x0515, ("state", "set")),
+                ("off_on_duration", 0x0012, ("state", "set")),
+                ("overload_protection", 0x020B, ("state", "set")),
+            ],
+        )
+        self.assertEqual(make_write(plan, "button_lock", "OFF").value, 1)
+        self.assertEqual(make_write(plan, "power_outage_memory", True).value, 1)
+        self.assertEqual(make_write(plan, "click_mode", "multi").value, 2)
+        self.assertEqual(make_write(plan, "mode_switch", "anti_flicker_mode").value, 4)
+        self.assertEqual(make_write(plan, "dimming_range_minimum", 10).value, 10)
+        self.assertEqual(make_write(plan, "off_on_duration", 2.5).value, 25)
+        self.assertEqual(make_write(plan, "overload_protection", 3250).value, 3250)
+
+    def test_lumi_on_off_macro_expands_static_features(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi switch",
+            vendor: "Aqara",
+            extend: [lumi.lumiModernExtend.lumiOnOff({powerOutageMemory: "binary", operationMode: true, lockRelay: true})],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-on-off.ts").devices[0])
+        self.assertFalse(plan.device.partial)
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute) for item in plan.entities],
+            [
+                ("state", "genOnOff", "onOff"),
+                ("device_temperature", "genDeviceTempCfg", "currentTemperature"),
+                ("power_outage_count", "manuSpecificLumi", 5),
+                ("power_outage_memory", "manuSpecificLumi", 0x0201),
+                ("operation_mode", "manuSpecificLumi", 0x0200),
+                ("lock_relay", "manuSpecificLumi", 0x0285),
+            ],
+        )
+        self.assertEqual(make_write(plan, "power_outage_memory", True).value, 1)
+        self.assertEqual(make_write(plan, "operation_mode", "decoupled").value, 0)
+        self.assertEqual(make_write(plan, "lock_relay", True).value, 1)
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificLumi", 5, 4)),
+            {"power_outage_count": 3},
+        )
+
+    def test_lumi_meter_macros_use_static_attributes_and_scales(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi meter",
+            vendor: "Aqara",
+            extend: [lumi.lumiModernExtend.lumiPower(), lumi.lumiModernExtend.lumiElectricityMeter()],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-meter.ts").devices[0])
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute) for item in plan.entities],
+            [
+                ("power", "genAnalogInput", "presentValue"),
+                ("energy", "manuSpecificLumi", 0x0095),
+                ("voltage", "manuSpecificLumi", 0x0096),
+                ("current", "manuSpecificLumi", 0x0097),
+            ],
+        )
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificLumi", 0x0096, 2300)), {"voltage": 230})
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificLumi", 0x0097, 1250)), {"current": 1.25})
+
     def test_standard_converter_aliases_are_normalized_to_zcl(self) -> None:
         source = """
         export const definitions = [{
@@ -1120,7 +1207,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.custom_cluster_specs[0].name, "manuSpecificLumi")
         self.assertEqual(device.custom_cluster_specs[0].cluster_id, 0xFCC0)
         self.assertEqual(device.custom_cluster_specs[0].manufacturer_code, 0x115F)
-        self.assertEqual(len(device.custom_cluster_specs[0].attributes), 21)
+        self.assertEqual(len(device.custom_cluster_specs[0].attributes), 28)
 
     def test_ikea_unknown_cluster_macro_is_declarative(self) -> None:
         source = """

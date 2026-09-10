@@ -1083,6 +1083,11 @@ def _lumi_cluster_spec() -> CustomClusterSpec:
         0x115F,
         (
             {"name": "mode", "id": 0x0009, "type": "uint8_t", "write": True},
+            {"name": "powerOutageCount", "id": 0x0005, "type": "uint32_t", "write": False},
+            {"name": "energy", "id": 0x0095, "type": "uint32_t", "write": False},
+            {"name": "voltage", "id": 0x0096, "type": "uint32_t", "write": False},
+            {"name": "current", "id": 0x0097, "type": "uint32_t", "write": False},
+            {"name": "power", "id": 0x0098, "type": "uint32_t", "write": False},
             {"name": "switchMode", "id": 0x0004, "type": "uint16_t", "write": True},
             {"name": "illuminance", "id": 0x0112, "type": "uint32_t", "write": True},
             {"name": "displayUnit", "id": 0x0114, "type": "uint8_t", "write": True},
@@ -1100,6 +1105,8 @@ def _lumi_cluster_spec() -> CustomClusterSpec:
             {"name": "selftest", "id": 0x0127, "type": "Bool", "write": True},
             {"name": "overloadProtection", "id": 0x020B, "type": "Single", "write": True},
             {"name": "powerOutageMode", "id": 0x0517, "type": "uint8_t", "write": True},
+            {"name": "dimmingRangeMin", "id": 0x0515, "type": "uint8_t", "write": True},
+            {"name": "dimmingRangeMax", "id": 0x0516, "type": "uint8_t", "write": True},
             {"name": "curtainReverse", "id": 0x0400, "type": "Bool", "write": True},
             {"name": "curtainHandOpen", "id": 0x0401, "type": "Bool", "write": True},
             {"name": "curtainCalibrated", "id": 0x0402, "type": "Bool", "write": True},
@@ -1485,6 +1492,12 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         # from generic custom-cluster parsing until a declarative schema path
         # is available for arbitrary vendor clusters.
         return [], [], name, True
+    if name == "lumiOnOff":
+        return _lumi_on_off_extend(args)
+    lumi_simple = _lumi_simple_extend(name, args)
+    if lumi_simple is not None:
+        exposes, bindings = lumi_simple
+        return exposes, bindings, name, True
     if name == "tuyaBase":
         unsupported = set(args) - {"dp", "queryOnConfigure", "bindBasicOnConfigure"}
         for option in ("queryOnConfigure", "bindBasicOnConfigure"):
@@ -2192,6 +2205,277 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         bindings = [Binding(name, cluster, command=command, direction="event") for command in commands]
         return exposes, bindings, name, True
     return [], [], name, False
+
+
+def _lumi_simple_extend(name: str, args: dict[str, Any]) -> tuple[list[Expose], list[Binding]] | None:
+    """Expand fixed Lumi manufacturer attributes without evaluating JavaScript."""
+    definitions: dict[str, tuple[str, int, str, dict[str, Any]]] = {
+        "lumiButtonLock": (
+            "button_lock",
+            0x0200,
+            "binary",
+            {"ON": 0, "OFF": 1},
+        ),
+        "lumiPowerOutageMemory": (
+            "power_outage_memory",
+            0x0201,
+            "binary",
+            {True: 1, False: 0},
+        ),
+        "lumiLedDisabledNight": (
+            "led_disabled_night",
+            0x0203,
+            "binary",
+            {True: 1, False: 0},
+        ),
+        "lumiFlipIndicatorLight": (
+            "flip_indicator_light",
+            0x00F0,
+            "binary",
+            {"ON": 1, "OFF": 0},
+        ),
+        "lumiChildLock": (
+            "child_lock",
+            0x0285,
+            "binary",
+            {"LOCK": 1, "UNLOCK": 0},
+        ),
+        "lumiLockRelay": (
+            "lock_relay",
+            0x0285,
+            "binary",
+            {True: 1, False: 0},
+        ),
+        "lumiOperationMode": (
+            "operation_mode",
+            0x0200,
+            "enum",
+            {"decoupled": 0, "control_relay": 1},
+        ),
+        "lumiSwitchType": (
+            "switch_type",
+            0x000A,
+            "enum",
+            {"toggle": 1, "momentary": 2, "none": 3},
+        ),
+        "lumiClickMode": (
+            "click_mode",
+            0x0125,
+            "enum",
+            {"fast": 1, "multi": 2},
+        ),
+        "lumiSwitchMode": (
+            "mode_switch",
+            0x0004,
+            "enum",
+            {"quick_mode": 1, "anti_flicker_mode": 4},
+        ),
+        "lumiLedIndicator": (
+            "led_indicator",
+            0x0203,
+            "binary",
+            {"ON": 1, "OFF": 0},
+        ),
+        "lumiPowerOnBehavior": (
+            "power_on_behavior",
+            0x0517,
+            "enum",
+            {"on": 0, "previous": 1, "off": 2, "inverted": 3},
+        ),
+    }
+    definition = definitions.get(name)
+    numeric_definitions: dict[str, tuple[str, str, int, str, float | None, float | None, float | None, float | None]] = {
+        "lumiDimmingRangeMin": ("dimming_range_minimum", "manuSpecificLumi", 0x0515, "%", 1, 99, 1, None),
+        "lumiDimmingRangeMax": ("dimming_range_maximum", "manuSpecificLumi", 0x0516, "%", 2, 100, 1, None),
+        "lumiOffOnDuration": ("off_on_duration", "genLevelCtrl", 0x0012, "s", 0, 10, 0.5, 10),
+        "lumiOnOffDuration": ("on_off_duration", "genLevelCtrl", 0x0013, "s", 0, 10, 0.5, 10),
+    }
+    numeric_definition = numeric_definitions.get(name)
+    if numeric_definition is not None:
+        if any(key not in {"access", "attribute", "description", "entityCategory", "unit", "valueMax", "valueMin", "valueStep"} for key in args):
+            return None
+        expose_name, cluster, default_attribute, default_unit, default_min, default_max, default_step, scale = numeric_definition
+        attribute = _static_value(args.get("attribute")) if "attribute" in args else default_attribute
+        if not isinstance(attribute, (int, str)):
+            return None
+        access_name = _static_text(args.get("access")) or "ALL"
+        access = ("state", "set") if access_name == "ALL" else tuple(access_name.lower().split("_"))
+        expression = Expression("divide", (scale,)) if scale else None
+        return [
+            Expose(
+                "numeric",
+                expose_name,
+                expose_name,
+                access,
+                unit=_static_text(args.get("unit")) or default_unit,
+                value_min=args.get("valueMin", default_min),
+                value_max=args.get("valueMax", default_max),
+                value_step=args.get("valueStep", default_step),
+                description=_static_text(args.get("description")),
+                category=_static_text(args.get("entityCategory")) or "config",
+            )
+        ], [
+            Binding(name, cluster, attribute, direction="report", expression=expression),
+            Binding(name, cluster, attribute, direction="command", expression=expression),
+        ]
+    if definition is not None or name == "lumiOverloadProtection":
+        allowed_args = {"access", "attribute", "description", "endpointName", "entityCategory", "lookup", "valueMax", "valueMin", "valueStep"}
+        if any(key not in allowed_args for key in args):
+            return None
+    if definition is not None:
+        expose_name, default_attribute, expose_type, default_lookup = definition
+        attribute = _static_value(args.get("attribute")) if "attribute" in args else default_attribute
+        lookup = args.get("lookup", default_lookup)
+        if not isinstance(attribute, int) or not isinstance(lookup, dict):
+            return None
+        if not all(isinstance(key, (str, int, bool)) and isinstance(value, (str, int, float, bool)) for key, value in lookup.items()):
+            return None
+        expression = Expression("lookup", ({str(value): key for key, value in lookup.items()},))
+        values = () if expose_type == "binary" else tuple(str(key) for key in lookup)
+        access_name = _static_text(args.get("access")) or "ALL"
+        access = ("state", "set") if access_name == "ALL" else tuple(access_name.lower().split("_"))
+        category = _static_text(args.get("entityCategory")) or "config"
+        expose = Expose(
+            expose_type,
+            expose_name,
+            expose_name,
+            access,
+            values=values,
+            endpoint=_static_text(args.get("endpointName")),
+            description=_static_text(args.get("description")),
+            category=category,
+        )
+        return [expose], [
+            Binding(name, "manuSpecificLumi", attribute, direction="report", expression=expression),
+            Binding(name, "manuSpecificLumi", attribute, direction="command", expression=expression),
+        ]
+    if name == "lumiOverloadProtection":
+        attribute = _static_value(args.get("attribute")) if "attribute" in args else 0x020B
+        if not isinstance(attribute, int):
+            return None
+        access_name = _static_text(args.get("access")) or "ALL"
+        access = ("state", "set") if access_name == "ALL" else tuple(access_name.lower().split("_"))
+        return [
+            Expose(
+                "numeric",
+                "overload_protection",
+                "overload_protection",
+                access,
+                unit="W",
+                value_min=100,
+                value_max=args.get("valueMax", 3840),
+                value_step=args.get("valueStep") if isinstance(args.get("valueStep"), (int, float)) else None,
+                endpoint=_static_text(args.get("endpointName")),
+                description=_static_text(args.get("description")),
+                category=_static_text(args.get("entityCategory")) or "config",
+            )
+        ], [
+            Binding(name, "manuSpecificLumi", attribute, direction="report"),
+            Binding(name, "manuSpecificLumi", attribute, direction="command"),
+        ]
+    if name == "lumiPower":
+        if set(args) - {"access", "description", "entityCategory", "unit"}:
+            return None
+        access_name = _static_text(args.get("access")) or "STATE"
+        access = ("state", "set") if access_name == "ALL" else tuple(access_name.lower().split("_"))
+        return [
+            Expose(
+                "numeric",
+                "power",
+                "power",
+                access,
+                unit=_static_text(args.get("unit")) or "W",
+                description=_static_text(args.get("description")),
+                category=_static_text(args.get("entityCategory")) or "diagnostic",
+            )
+        ], [Binding(name, "genAnalogInput", "presentValue", direction="report")]
+    if name == "lumiElectricityMeter":
+        if any(key not in {"energy", "voltage", "current"} for key in args) or any(
+            not isinstance(value, bool) for value in args.values()
+        ):
+            return None
+        fields = {
+            "energy": ("energy", 0x0095, "kWh", None),
+            "voltage": ("voltage", 0x0096, "V", Expression("divide", (10,))),
+            "current": ("current", 0x0097, "A", Expression("divide", (1000,))),
+        }
+        exposes: list[Expose] = []
+        bindings: list[Binding] = []
+        for option, (expose_name, attribute, unit, expression) in fields.items():
+            if args.get(option, True) is False:
+                continue
+            exposes.append(Expose("numeric", expose_name, expose_name, ("state",), unit=unit))
+            bindings.append(Binding(f"{name}_{option}", "manuSpecificLumi", attribute, direction="report", expression=expression))
+        return exposes, bindings
+    return None
+
+
+def _lumi_on_off_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    """Expand the static subset of lumiOnOff used by current definitions."""
+    supported_options = {
+        "deviceTemperature",
+        "endpointNames",
+        "lockRelay",
+        "operationMode",
+        "powerOutageCount",
+        "powerOutageMemory",
+    }
+    if set(args) - supported_options:
+        return [], [], "lumiOnOff", False
+    endpoint_names = args.get("endpointNames")
+    if endpoint_names is not None and (
+        not isinstance(endpoint_names, list)
+        or not endpoint_names
+        or not all(isinstance(item, str) for item in endpoint_names)
+    ):
+        return [], [], "lumiOnOff", False
+    endpoints = endpoint_names or [None]
+    exposes = [Expose("switch", "state", "state", ("state", "set"), endpoint=endpoint) for endpoint in endpoints]
+    bindings = [Binding("on_off", "genOnOff", "onOff", direction="report", endpoint=endpoint) for endpoint in endpoints]
+
+    if args.get("deviceTemperature", True) is True:
+        exposes.append(Expose("numeric", "device_temperature", "device_temperature", ("state",), unit="°C", category="diagnostic"))
+        bindings.append(Binding("device_temperature", "genDeviceTempCfg", "currentTemperature", direction="report"))
+    if args.get("powerOutageCount", True) is True:
+        exposes.append(Expose("numeric", "power_outage_count", "power_outage_count", ("state",), category="diagnostic"))
+        bindings.append(
+            Binding(
+                "lumi_power_outage_count",
+                "manuSpecificLumi",
+                5,
+                direction="report",
+                expression=Expression("subtract", (1,)),
+            )
+        )
+    if args.get("powerOutageMemory") == "binary":
+        generated_exposes, generated_bindings = _lumi_simple_extend("lumiPowerOutageMemory", {}) or ([], [])
+        exposes.extend(generated_exposes)
+        bindings.extend(generated_bindings)
+    elif args.get("powerOutageMemory") == "enum":
+        generated_exposes, generated_bindings = _lumi_simple_extend("lumiPowerOnBehavior", {}) or ([], [])
+        exposes.extend(generated_exposes)
+        bindings.extend(generated_bindings)
+    elif "powerOutageMemory" in args and args["powerOutageMemory"] is not False:
+        return [], [], "lumiOnOff", False
+    if args.get("operationMode") is True:
+        operation_endpoints = endpoint_names or [None]
+        for endpoint in operation_endpoints:
+            generated_exposes, generated_bindings = _lumi_simple_extend(
+                "lumiOperationMode",
+                {"endpointName": endpoint} if endpoint is not None else {},
+            ) or ([], [])
+            exposes.extend(generated_exposes)
+            bindings.extend(generated_bindings)
+    if args.get("lockRelay") is True:
+        lock_endpoints = endpoint_names or [None]
+        for endpoint in lock_endpoints:
+            generated_exposes, generated_bindings = _lumi_simple_extend(
+                "lumiLockRelay",
+                {"endpointName": endpoint} if endpoint is not None else {},
+            ) or ([], [])
+            exposes.extend(generated_exposes)
+            bindings.extend(generated_bindings)
+    return exposes, bindings, "lumiOnOff", True
 
 
 def _endpoint_clusters_for_extend(call: Any) -> list[EndpointCluster]:
