@@ -246,6 +246,16 @@ The README coverage table is generated from the same report:
 python3 scripts/update_readme_coverage.py
 ```
 
+Generate the detailed remaining-problems report, including configure gaps split
+by operation and call:
+
+```shell
+python3 scripts/status.py
+```
+
+This writes `STATUS.md`. Use `--top 50` to show more entries in each problem
+table or `--output /path/to/status.md` to select another output file.
+
 The repository pre-commit hook checks that the generated table is current.
 Install and run it with:
 
