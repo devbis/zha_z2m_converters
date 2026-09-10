@@ -29,6 +29,9 @@ class UnsupportedSyntax(Exception):
     pass
 
 
+_MISSING = object()
+
+
 @dataclass
 class _ObjectParser:
     tokens: list[Token]
@@ -137,8 +140,10 @@ class _ObjectParser:
                 if not isinstance(index, (str, int)):
                     raise UnsupportedSyntax("indexed access must use a static key")
                 return {"__indexed__": ".".join(parts), "index": index}
-            if self.constants and len(parts) == 1 and name in self.constants:
-                return self.constants[name]
+            if self.constants:
+                resolved = _resolve_static_path(self.constants, parts)
+                if resolved is not _MISSING:
+                    return resolved
             return {"__identifier__": ".".join(parts)}
         raise UnsupportedSyntax(f"unsupported value {token.value!r}")
 
@@ -663,9 +668,33 @@ def _contains_dynamic_value(value: Any) -> bool:
     return False
 
 
+def _resolve_static_path(constants: dict[str, Any], parts: list[str]) -> Any:
+    """Resolve a dotted path from literal namespaces without executing code."""
+    value: Any = constants
+    for part in parts:
+        if not isinstance(value, dict) or part not in value:
+            return _MISSING
+        value = value[part]
+    return value
+
+
 def _find_static_constants(tokens: list[Token]) -> dict[str, Any]:
     """Collect literal variable declarations without evaluating expressions."""
-    constants: dict[str, Any] = {}
+    constants: dict[str, Any] = {
+        "constants": {
+            "repInterval": {
+                "HOUR": 3600,
+                "MAX": 65000,
+                "MINUTE": 60,
+                "SECONDS_10": 10,
+                "MINUTES_10": 600,
+                "MINUTES_15": 900,
+                "MINUTES_30": 1800,
+                "MINUTES_5": 300,
+                "SECONDS_5": 5,
+            },
+        },
+    }
     for index, token in enumerate(tokens):
         if token.value not in {"const", "let", "var"}:
             continue
@@ -696,7 +725,12 @@ def _find_static_constants(tokens: list[Token]) -> dict[str, Any]:
             value = parser.parse_value()
         except UnsupportedSyntax:
             continue
-        if parser.current().kind != "eof" or _contains_dynamic_value(value):
+        if parser.current().kind != "eof":
+            continue
+        resolved_value = _resolve_static_config_expression(value, constants)
+        if resolved_value is not _MISSING:
+            value = resolved_value
+        if _contains_dynamic_value(value):
             continue
         constants[name.value] = value
     return constants
@@ -3006,6 +3040,9 @@ def _configure_endpoint(value: Any, locals_: dict[str, Any]) -> str | int | None
 
 def _resolve_config_value(value: Any, locals_: dict[str, Any]) -> Any:
     """Resolve static configure locals without evaluating expressions."""
+    resolved_expression = _resolve_static_config_expression(value, locals_)
+    if resolved_expression is not _MISSING:
+        return resolved_expression
     if isinstance(value, dict) and set(value) == {"__identifier__"}:
         name = str(value["__identifier__"])
         if name in locals_:
@@ -3024,6 +3061,48 @@ def _resolve_config_value(value: Any, locals_: dict[str, Any]) -> Any:
     if isinstance(value, dict):
         return {key: _resolve_config_value(item, locals_) for key, item in value.items()}
     return value
+
+
+def _resolve_static_config_expression(value: Any, locals_: dict[str, Any]) -> Any:
+    """Resolve the small set of pure helper calls allowed in configure data."""
+    if not isinstance(value, dict) or value.get("__call__") != "reporting.payload":
+        return _MISSING
+    args = value.get("args", [])
+    if not isinstance(args, list) or len(args) not in {4, 5}:
+        return _MISSING
+    resolved = [_resolve_config_value(item, locals_) for item in args]
+    attribute = _static_value(resolved[0])
+    minimum = _static_value(resolved[1])
+    maximum = _static_value(resolved[2])
+    change = _static_value(resolved[3])
+    if (
+        not isinstance(attribute, (str, int))
+        or not isinstance(minimum, (int, float))
+        or not isinstance(maximum, (int, float))
+        or not isinstance(change, (int, float))
+    ):
+        return _MISSING
+    payload = {
+        "attribute": attribute,
+        "minimumReportInterval": minimum,
+        "maximumReportInterval": maximum,
+        "reportableChange": change,
+    }
+    if len(resolved) == 5:
+        overrides = resolved[4]
+        if not isinstance(overrides, dict):
+            return _MISSING
+        for key, target in (
+            ("min", "minimumReportInterval"),
+            ("max", "maximumReportInterval"),
+            ("change", "reportableChange"),
+        ):
+            if key in overrides:
+                override = _static_value(overrides[key])
+                if not isinstance(override, (int, float)):
+                    return _MISSING
+                payload[target] = override
+    return [payload]
 
 
 def _is_coordinator_endpoint(value: Any) -> bool:
@@ -3205,7 +3284,7 @@ def _reporting_helper_actions(call: str | None, args: list[Any], locals_: dict[s
         return None
     cluster, attribute, minimum, maximum, change, reads_after = definition
     if len(args) == 2:
-        overrides = args[1]
+        overrides = _resolve_config_value(args[1], locals_)
         if not isinstance(overrides, dict):
             return None
         minimum = _static_value(overrides.get("min")) if "min" in overrides else minimum

@@ -8,8 +8,8 @@ the safe declarative translation to ZHA.
 
 | Status | Definitions | Share |
 |---|---:|---:|
-| Fully supported | 2,573 | 57.5% |
-| Usable partial | 1,627 | 36.3% |
+| Fully supported | 2,579 | 57.6% |
+| Usable partial | 1,621 | 36.2% |
 | Metadata only | 11 | 0.2% |
 | Unusable partial | 263 | 5.9% |
 | Rejected | 4 | 0.1% |
@@ -23,7 +23,7 @@ the safe declarative translation to ZHA.
 | unsupported extend macro | 607 |
 | dynamic expose or other expression | 306 |
 | no usable data path | 263 |
-| unsupported definition field | 141 |
+| unsupported definition field | 135 |
 
 ### Unsupported extend macros
 
@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 405 |
+| `configure` | 374 |
 | `exposes` | 87 |
 | `onEvent` | 15 |
 | `endpoint` | 10 |
@@ -101,13 +101,13 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 405 |
+| Any unsupported configure part | 374 |
 | dynamic syntax or control flow | 193 |
-| unsupported endpoint operation arguments | 130 |
 | unsupported endpoint/device operation | 108 |
+| unsupported endpoint operation arguments | 100 |
 | unsupported configure call | 51 |
 | direct or unsupported configure expression | 45 |
-| unsupported reporting arguments | 24 |
+| unsupported reporting arguments | 8 |
 | unsupported reporting helper | 3 |
 
 ### Configure: dynamic syntax or control flow
@@ -116,23 +116,6 @@ Categories can overlap when one definition has several different gaps.
 |---|---:|
 | `<parser-marked>` | 183 |
 | `<unknown>` | 10 |
-
-### Configure: unsupported endpoint operation arguments
-
-| Item | Definitions |
-|---|---:|
-| `endpoint.read` | 59 |
-| `endpoint.configureReporting` | 49 |
-| `endpoint.write` | 17 |
-| `endpoint1.write` | 12 |
-| `endpoint.command` | 2 |
-| `endpoint1.read` | 2 |
-| `endpoint.bind` | 2 |
-| `endpoint1.configureReporting` | 2 |
-| `mainController.read` | 1 |
-| `ep2.bind` | 1 |
-| `ep1.bind` | 1 |
-| `endpoint2.write` | 1 |
 
 ### Configure: unsupported endpoint/device operation
 
@@ -155,10 +138,10 @@ Categories can overlap when one definition has several different gaps.
 | `utils.attachOutputCluster` | 5 |
 | `m.setupAttributes` | 4 |
 | `utils.sleep` | 3 |
-| `heiman.configureReporting.aqiMeasuredValue` | 2 |
 | `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
-| `heiman.configureReporting.pm25MeasuredValue` | 2 |
 | `heiman.configureReporting.batteryState` | 2 |
+| `heiman.configureReporting.pm25MeasuredValue` | 2 |
+| `heiman.configureReporting.aqiMeasuredValue` | 2 |
 | `heiman.configureReporting.pm10measuredValue` | 2 |
 | `syncTime` | 2 |
 | `shutterConfiguration` | 1 |
@@ -173,20 +156,31 @@ Categories can overlap when one definition has several different gaps.
 | `ensureNyceIasEnrollment` | 1 |
 | *6 more items* | — |
 
+### Configure: unsupported endpoint operation arguments
+
+| Item | Definitions |
+|---|---:|
+| `endpoint.read` | 59 |
+| `endpoint.configureReporting` | 19 |
+| `endpoint.write` | 17 |
+| `endpoint1.write` | 12 |
+| `endpoint.command` | 2 |
+| `endpoint1.read` | 2 |
+| `endpoint.bind` | 2 |
+| `mainController.read` | 1 |
+| `ep2.bind` | 1 |
+| `ep1.bind` | 1 |
+| `endpoint2.write` | 1 |
+
 ### Configure: unsupported reporting arguments
 
 | Item | Definitions |
 |---|---:|
-| `reporting.temperature` | 9 |
 | `reporting.bind` | 6 |
-| `reporting.batteryPercentageRemaining` | 5 |
-| `reporting.batteryVoltage` | 3 |
-| `reporting.humidity` | 3 |
-| `reporting.co2` | 1 |
 | `reporting.onOff` | 1 |
-| `reporting.thermostatTemperature` | 1 |
-| `reporting.thermostatPIHeatingDemand` | 1 |
-| `reporting.thermostatOccupiedHeatingSetpoint` | 1 |
+| `reporting.humidity` | 1 |
+| `reporting.temperature` | 1 |
+| `reporting.batteryVoltage` | 1 |
 
 ### Configure: direct or unsupported configure expression
 

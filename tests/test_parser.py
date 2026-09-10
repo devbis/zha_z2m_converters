@@ -2018,6 +2018,42 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(action.maximum_interval, 3600)
         self.assertEqual(action.reportable_change, 0)
 
+    def test_configure_resolves_literal_rep_interval_constants(self) -> None:
+        source = """
+        import * as constants from "../lib/constants";
+        export const definitions = [{
+            zigbeeModel: ["CONSTANTS"],
+            model: "Constants",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                const payload = reporting.payload("onOff", 0, constants.repInterval.HOUR, 0);
+                await endpoint.configureReporting("genOnOff", [
+                    {attribute: "onOff", minimumReportInterval: 0, maximumReportInterval: constants.repInterval.HOUR, reportableChange: 0},
+                ]);
+                await endpoint.configureReporting("genOnOff", payload);
+                await reporting.temperature(endpoint, {
+                    min: constants.repInterval.MINUTES_10,
+                    max: constants.repInterval.MAX,
+                    change: 100,
+                });
+            },
+        }];
+        """
+        device = parse_source(source, "configure-constants.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [
+                (item.cluster, item.minimum_interval, item.maximum_interval, item.reportable_change)
+                for item in device.configure_actions
+            ],
+            [
+                ("genOnOff", 0, 3600, 0),
+                ("genOnOff", 0, 3600, 0),
+                ("msTemperatureMeasurement", 600, 65000, 100),
+            ],
+        )
+
     def test_custom_electricity_converter_keeps_device_partial(self) -> None:
         source = """
         export const definitions = [{
