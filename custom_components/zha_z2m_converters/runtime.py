@@ -779,17 +779,35 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
             if action.operation == "bind":
                 await cluster.bind()
             elif action.operation == "read":
-                await cluster.read_attributes(list(action.attributes))
+                read_kwargs = (
+                    {"manufacturer": action.manufacturer_code}
+                    if action.manufacturer_code is not None
+                    else {}
+                )
+                await cluster.read_attributes(list(action.attributes), **read_kwargs)
             elif action.operation == "configure_reporting":
                 if len(action.attributes) != 1:
                     _LOGGER.warning("Configure reporting requires one attribute: %s", action)
                     continue
+                attribute = action.attributes[0]
+                if action.manufacturer_code is not None:
+                    attribute = cluster.find_attribute(
+                        attribute,
+                        manufacturer_code=action.manufacturer_code,
+                    )
                 await cluster.configure_reporting(
-                    action.attributes[0],
+                    attribute,
                     int(action.minimum_interval or 0),
                     int(action.maximum_interval or 0),
                     int(action.reportable_change or 0),
                 )
+            elif action.operation == "write":
+                write_kwargs = (
+                    {"manufacturer": action.manufacturer_code}
+                    if action.manufacturer_code is not None
+                    else {}
+                )
+                await cluster.write_attributes(action.payload or {}, **write_kwargs)
             elif action.operation == "command":
                 await cluster.command(action.command, **(action.payload or {}))
             else:

@@ -48,6 +48,16 @@ class _ObjectParser:
         return token
 
     def parse_value(self) -> Any:
+        """Parse a value and discard the TypeScript-only ``as const`` assertion."""
+        value = self._parse_value()
+        if self.current().value == "as":
+            if self.index + 1 >= len(self.tokens) or self.tokens[self.index + 1].value != "const":
+                raise UnsupportedSyntax("only 'as const' assertions are supported")
+            self.take("as")
+            self.take("const")
+        return value
+
+    def _parse_value(self) -> Any:
         token = self.current()
         if self.looks_like_predicate():
             return self.parse_predicate()
@@ -127,7 +137,7 @@ class _ObjectParser:
                 if not isinstance(index, (str, int)):
                     raise UnsupportedSyntax("indexed access must use a static key")
                 return {"__indexed__": ".".join(parts), "index": index}
-            if self.constants and "." not in parts and name in self.constants:
+            if self.constants and len(parts) == 1 and name in self.constants:
                 return self.constants[name]
             return {"__identifier__": ".".join(parts)}
         raise UnsupportedSyntax(f"unsupported value {token.value!r}")
@@ -310,6 +320,16 @@ class _ObjectParser:
             if self.current().value == ";":
                 self.take()
                 continue
+            if self.current().value == "try":
+                statement_start = self.index
+                try:
+                    try_statements, try_unsupported = self.parse_static_configure_try()
+                    statements.extend(try_statements)
+                    unsupported = unsupported or try_unsupported
+                except UnsupportedSyntax:
+                    unsupported = True
+                    self.skip_to_object_boundary(statement_start, boundaries=(";", "}"))
+                continue
             if self.current().value == "for":
                 loop_start = self.index
                 try:
@@ -403,6 +423,16 @@ class _ObjectParser:
             if self.current().value == ";":
                 self.take()
                 continue
+            if self.current().value == "try":
+                statement_start = self.index
+                try:
+                    try_statements, try_unsupported = self.parse_static_configure_try()
+                    statements.extend(try_statements)
+                    unsupported = unsupported or try_unsupported
+                except UnsupportedSyntax:
+                    unsupported = True
+                    self.skip_to_object_boundary(statement_start, boundaries=(";",))
+                continue
             if self.current().value == "for":
                 loop_start = self.index
                 try:
@@ -440,6 +470,47 @@ class _ObjectParser:
                 if self.current().value == ";":
                     self.take()
         return statements, unsupported
+
+    def parse_static_configure_try(self) -> tuple[list[Any], bool]:
+        """Extract static configure calls from a try block without executing it."""
+        self.take("try")
+        body = self.take_block_tokens()
+        statements, unsupported = _ObjectParser(
+            body,
+            constants={**(self.constants or {})},
+        ).parse_configure_statements()
+
+        saw_handler = False
+        if self.current().value == "catch":
+            saw_handler = True
+            self.take("catch")
+            if self.current().value == "(":
+                self.skip_balanced("(", ")")
+            catch_body = self.take_block_tokens()
+            unsupported = unsupported or bool(catch_body)
+        if self.current().value == "finally":
+            saw_handler = True
+            self.take("finally")
+            finally_body = self.take_block_tokens()
+            unsupported = unsupported or bool(finally_body)
+        if not saw_handler:
+            raise UnsupportedSyntax("configure try requires catch or finally")
+        return statements, unsupported
+
+    def take_block_tokens(self) -> list[Token]:
+        """Consume a brace-delimited block and return its inner tokens."""
+        self.take("{")
+        start = self.index
+        depth = 1
+        while self.current().kind != "eof" and depth:
+            token = self.take()
+            if token.value == "{":
+                depth += 1
+            elif token.value == "}":
+                depth -= 1
+        if depth:
+            raise UnsupportedSyntax("unclosed configure block")
+        return self.tokens[start : self.index - 1]
 
     def looks_like_generic_call(self) -> bool:
         """Distinguish TypeScript generic calls from comparison operators."""
@@ -551,7 +622,11 @@ def _validate_with_tree_sitter(text: str) -> bool:
     return not tree.root_node.has_error
 
 
-def _find_assignments(tokens: list[Token], names: set[str]) -> list[tuple[Token, Any]]:
+def _find_assignments(
+    tokens: list[Token],
+    names: set[str],
+    constants: dict[str, Any] | None = None,
+) -> list[tuple[Token, Any]]:
     found: list[tuple[Token, Any]] = []
     for index, token in enumerate(tokens):
         if token.kind != "identifier" or token.value not in names:
@@ -569,12 +644,62 @@ def _find_assignments(tokens: list[Token], names: set[str]) -> list[tuple[Token,
         end = _matching_index(tokens, start)
         if end is None:
             continue
-        parser = _ObjectParser(tokens[start : end + 1])
+        parser = _ObjectParser(tokens[start : end + 1], constants={**(constants or {})})
         try:
             found.append((token, parser.parse_value()))
         except UnsupportedSyntax:
             found.append((token, None))
     return found
+
+
+def _contains_dynamic_value(value: Any) -> bool:
+    """Return whether a parsed literal contains an executable parser node."""
+    if isinstance(value, list):
+        return any(_contains_dynamic_value(item) for item in value)
+    if isinstance(value, dict):
+        if any(key.startswith("__") for key in value):
+            return True
+        return any(_contains_dynamic_value(item) for item in value.values())
+    return False
+
+
+def _find_static_constants(tokens: list[Token]) -> dict[str, Any]:
+    """Collect literal variable declarations without evaluating expressions."""
+    constants: dict[str, Any] = {}
+    for index, token in enumerate(tokens):
+        if token.value not in {"const", "let", "var"}:
+            continue
+        name_index = index + 1
+        while name_index < len(tokens) and tokens[name_index].value not in {"=", ";"}:
+            name_index += 1
+        if name_index >= len(tokens) or tokens[name_index].value != "=" or name_index == index + 1:
+            continue
+        name = tokens[index + 1]
+        if name.kind != "identifier":
+            continue
+        start = name_index + 1
+        end = start
+        depth = 0
+        while end < len(tokens):
+            value = tokens[end].value
+            if value in {"{", "[", "("}:
+                depth += 1
+            elif value in {"}", "]", ")"}:
+                depth -= 1
+            if depth == 0 and value == ";":
+                break
+            end += 1
+        if start >= end:
+            continue
+        parser = _ObjectParser(tokens[start:end], constants={**constants})
+        try:
+            value = parser.parse_value()
+        except UnsupportedSyntax:
+            continue
+        if parser.current().kind != "eof" or _contains_dynamic_value(value):
+            continue
+        constants[name.value] = value
+    return constants
 
 
 def _matching_index(tokens: list[Token], start: int) -> int | None:
@@ -2075,6 +2200,11 @@ def _configure_endpoint(value: Any, locals_: dict[str, Any]) -> str | int | None
         index = value.get("index")
         if isinstance(index, int):
             return f"__endpoint_index__:{index}"
+    identifier = _identifier(value)
+    if identifier:
+        match = re.fullmatch(r"(?:endpoint|ep)(\d+)", identifier)
+        if match:
+            return int(match.group(1))
     return None
 
 
@@ -2084,6 +2214,14 @@ def _resolve_config_value(value: Any, locals_: dict[str, Any]) -> Any:
         name = str(value["__identifier__"])
         if name in locals_:
             return _resolve_config_value(locals_[name], locals_)
+        parts = name.split(".")
+        if parts[0] in locals_:
+            resolved: Any = locals_[parts[0]]
+            for part in parts[1:]:
+                if not isinstance(resolved, dict) or part not in resolved:
+                    return value
+                resolved = resolved[part]
+            return _resolve_config_value(resolved, locals_)
         return value
     if isinstance(value, list):
         return [_resolve_config_value(item, locals_) for item in value]
@@ -2096,10 +2234,25 @@ def _is_coordinator_endpoint(value: Any) -> bool:
     return _identifier(value) in {"coordinatorEndpoint", "coordinator"}
 
 
+def _static_manufacturer_option(value: Any, locals_: dict[str, Any]) -> tuple[bool, int | None]:
+    """Resolve the manufacturer option accepted by read/reporting calls."""
+    if value is None:
+        return True, None
+    resolved = _resolve_config_value(value, locals_)
+    if not isinstance(resolved, dict):
+        return False, None
+    raw_code = resolved.get("manufacturerCode")
+    if raw_code is None:
+        return True, None
+    code = _static_manufacturer_code(raw_code)
+    return code is not None, code
+
+
 def _configure_reporting_actions(
     endpoint: str | int,
     cluster: Any,
     payload: Any,
+    manufacturer_code: int | None = None,
 ) -> list[ConfigureAction] | None:
     if not isinstance(cluster, (str, int)) or not isinstance(payload, list) or not payload:
         return None
@@ -2127,6 +2280,7 @@ def _configure_reporting_actions(
                 maximum_interval=maximum,
                 reportable_change=change,
                 target="device",
+                manufacturer_code=manufacturer_code,
             )
         )
     return actions
@@ -2148,6 +2302,46 @@ def _configure_command_action(
         return None
     static_payload = {str(key): _static_value(value) for key, value in payload.items()}
     return ConfigureAction("command", endpoint, cluster, command=command, payload=static_payload, target="device")
+
+
+def _configure_write_action(
+    endpoint: str | int,
+    args: list[Any],
+    locals_: dict[str, Any],
+) -> ConfigureAction | None:
+    """Convert a literal endpoint.write call into a declarative action."""
+    if len(args) not in {2, 3}:
+        return None
+    cluster = _static_value(args[0])
+    raw_payload = _resolve_config_value(args[1], locals_)
+    options_valid, manufacturer_code = _static_manufacturer_option(
+        args[2] if len(args) == 3 else None,
+        locals_,
+    )
+    if not isinstance(cluster, (str, int)) or not isinstance(raw_payload, dict) or not options_valid:
+        return None
+
+    payload: dict[str, Any] = {}
+    for attribute, raw_value in raw_payload.items():
+        if not isinstance(attribute, (str, int)):
+            return None
+        if isinstance(raw_value, dict) and "value" in raw_value:
+            value = _static_value(raw_value["value"])
+            if value is None and raw_value["value"] is not None:
+                return None
+        else:
+            value = _static_value(raw_value)
+            if value is None and raw_value is not None:
+                return None
+        payload[attribute] = value
+    return ConfigureAction(
+        "write",
+        endpoint,
+        cluster,
+        payload=payload,
+        target="device",
+        manufacturer_code=manufacturer_code,
+    )
 
 
 _REPORTING_HELPERS: dict[str, tuple[str, str, int | float, int | float, int | float | None, bool]] = {
@@ -2242,15 +2436,19 @@ def _reporting_helper_actions(call: str | None, args: list[Any], locals_: dict[s
     return actions
 
 
-def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
+def _configure_actions(
+    value: Any,
+    constants: dict[str, Any] | None = None,
+) -> tuple[list[ConfigureAction], bool]:
     """Extract a small whitelist of bind and read operations from a callback."""
     if value is None or value == []:
         return [], False
     if not isinstance(value, dict) or "__configure__" not in value:
         return [], True
-    locals_ = value.get("__locals__", {})
-    if not isinstance(locals_, dict):
-        locals_ = {}
+    local_values = value.get("__locals__", {})
+    if not isinstance(local_values, dict):
+        local_values = {}
+    locals_ = {**(constants or {}), **local_values}
     actions: list[ConfigureAction] = []
     unsupported = "__unsupported__" in value
     for statement in value.get("__configure__", []):
@@ -2261,7 +2459,7 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             base = statement["__fluent__"]
             endpoint = _configure_endpoint(base, locals_)
             for method in statement.get("methods", []):
-                if method.get("name") not in {"bind", "read", "command"} or endpoint is None:
+                if method.get("name") not in {"bind", "read", "write", "command"} or endpoint is None:
                     unsupported = True
                     continue
                 args = method.get("args", [])
@@ -2269,6 +2467,13 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                     command_action = _configure_command_action(endpoint, args, locals_)
                     if command_action is not None:
                         actions.append(command_action)
+                    else:
+                        unsupported = True
+                    continue
+                if method.get("name") == "write":
+                    write_action = _configure_write_action(endpoint, args, locals_)
+                    if write_action is not None:
+                        actions.append(write_action)
                     else:
                         unsupported = True
                     continue
@@ -2287,12 +2492,29 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                     else:
                         unsupported = True
                     continue
-                if len(args) == 2 and isinstance(_resolve_config_value(args[1], locals_), list):
+                if len(args) in {2, 3} and isinstance(_resolve_config_value(args[1], locals_), list):
                     cluster = _static_value(args[0])
                     attributes_value = _resolve_config_value(args[1], locals_)
                     attributes = tuple(_static_value(item) for item in attributes_value)
-                    if isinstance(cluster, (str, int)) and all(isinstance(item, (str, int)) for item in attributes):
-                        actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes, target="device"))
+                    options_valid, manufacturer_code = _static_manufacturer_option(
+                        args[2] if len(args) == 3 else None,
+                        locals_,
+                    )
+                    if (
+                        isinstance(cluster, (str, int))
+                        and all(isinstance(item, (str, int)) for item in attributes)
+                        and options_valid
+                    ):
+                        actions.append(
+                            ConfigureAction(
+                                "read",
+                                endpoint,
+                                cluster,
+                                attributes=attributes,
+                                target="device",
+                                manufacturer_code=manufacturer_code,
+                            )
+                        )
                     else:
                         unsupported = True
                 else:
@@ -2332,7 +2554,7 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
             else:
                 unsupported = True
             continue
-        if call and not call.startswith("reporting.") and call.rsplit(".", 1)[-1] in {"bind", "read", "command", "configureReporting"}:
+        if call and not call.startswith("reporting.") and call.rsplit(".", 1)[-1] in {"bind", "read", "write", "command", "configureReporting"}:
             method_name = call.rsplit(".", 1)[-1]
             receiver = {"__identifier__": call.rsplit(".", 1)[0]}
             endpoint = _configure_endpoint(receiver, locals_)
@@ -2351,23 +2573,52 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
                 else:
                     unsupported = True
                 continue
-            if method_name == "read" and len(args) == 2 and isinstance(_resolve_config_value(args[1], locals_), list):
+            if method_name == "read" and len(args) in {2, 3} and isinstance(_resolve_config_value(args[1], locals_), list):
                 cluster = _static_value(args[0])
                 attributes_value = _resolve_config_value(args[1], locals_)
                 attributes = tuple(_static_value(item) for item in attributes_value)
-                if isinstance(cluster, (str, int)) and all(isinstance(item, (str, int)) for item in attributes):
-                    actions.append(ConfigureAction("read", endpoint, cluster, attributes=attributes, target="device"))
+                options_valid, manufacturer_code = _static_manufacturer_option(
+                    args[2] if len(args) == 3 else None,
+                    locals_,
+                )
+                if (
+                    isinstance(cluster, (str, int))
+                    and all(isinstance(item, (str, int)) for item in attributes)
+                    and options_valid
+                ):
+                    actions.append(
+                        ConfigureAction(
+                            "read",
+                            endpoint,
+                            cluster,
+                            attributes=attributes,
+                            target="device",
+                            manufacturer_code=manufacturer_code,
+                        )
+                    )
                 else:
                     unsupported = True
                 continue
-            if method_name == "configureReporting" and len(args) == 2:
+            if method_name == "configureReporting" and len(args) in {2, 3}:
+                options_valid, manufacturer_code = _static_manufacturer_option(
+                    args[2] if len(args) == 3 else None,
+                    locals_,
+                )
                 reporting_actions = _configure_reporting_actions(
                     endpoint,
                     _static_value(args[0]),
                     _resolve_config_value(args[1], locals_),
+                    manufacturer_code if options_valid else None,
                 )
-                if reporting_actions is not None:
+                if reporting_actions is not None and options_valid:
                     actions.extend(reporting_actions)
+                else:
+                    unsupported = True
+                continue
+            if method_name == "write":
+                write_action = _configure_write_action(endpoint, args, locals_)
+                if write_action is not None:
+                    actions.append(write_action)
                 else:
                     unsupported = True
                 continue
@@ -2425,7 +2676,13 @@ def _configure_actions(value: Any) -> tuple[list[ConfigureAction], bool]:
     return actions, unsupported
 
 
-def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[Diagnostic]) -> DeviceDefinition | None:
+def _device(
+    raw: dict[str, Any],
+    token: Token,
+    filename: str,
+    diagnostics: list[Diagnostic],
+    constants: dict[str, Any] | None = None,
+) -> DeviceDefinition | None:
     model = _string(raw.get("model"))
     vendor = _string(raw.get("vendor")) or _string(raw.get("manufacturer"))
     raw_models = raw.get("zigbeeModel")
@@ -2447,7 +2704,7 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
     exposes = [item for item in exposes if item is not None]
     from_zigbee = _bindings(raw.get("fromZigbee"), "report")
     to_zigbee = _bindings(raw.get("toZigbee"), "command")
-    configure_actions, configure_unsupported = _configure_actions(raw.get("configure"))
+    configure_actions, configure_unsupported = _configure_actions(raw.get("configure"), constants)
     endpoint_clusters: list[EndpointCluster] = []
     custom_clusters: list[str] = []
     custom_cluster_specs: list[CustomClusterSpec] = []
@@ -2619,7 +2876,8 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
     """Parse definitions without importing or executing the source module."""
     result = ParseResult(syntax_validated=_validate_with_tree_sitter(text))
     tokens = tokenize(text)
-    assignments = _find_assignments(tokens, {"definitions", "definition"})
+    constants = _find_static_constants(tokens)
+    assignments = _find_assignments(tokens, {"definitions", "definition"}, constants)
     if not assignments:
         result.diagnostics.append(Diagnostic("warning", "no-definitions", "no static definitions assignment found", filename))
         return result
@@ -2676,7 +2934,7 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
                     ),
                 )
                 continue
-            device = _device(raw, token, filename, result.diagnostics)
+            device = _device(raw, token, filename, result.diagnostics, constants)
             if device:
                 result.devices.append(device)
     return result

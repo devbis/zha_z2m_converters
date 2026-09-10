@@ -1181,6 +1181,9 @@ class ParserTests(unittest.TestCase):
             async def command(self, command, **payload):
                 calls.append(("command", command, payload))
 
+            async def write_attributes(self, attributes, **kwargs):
+                calls.append(("write", attributes, kwargs))
+
         class Endpoint:
             in_clusters = {0x0006: Cluster()}
             out_clusters = {}
@@ -1204,6 +1207,7 @@ class ParserTests(unittest.TestCase):
                 reportable_change=0,
             ),
             ConfigureAction("command", 1, "genOnOff", command="on", payload={"payloadSize": 1}),
+            ConfigureAction("write", 1, "genOnOff", payload={"onOff": 1}),
         )
         asyncio.run(_apply_configure_actions(Device(), actions))
         self.assertEqual(
@@ -1213,8 +1217,111 @@ class ParserTests(unittest.TestCase):
                 ("read", ["onOff"]),
                 ("reporting", "onOff", 0, 3600, 0),
                 ("command", "on", {"payloadSize": 1}),
+                ("write", {"onOff": 1}, {}),
             ],
         )
+
+    def test_static_configure_actions_pass_manufacturer_code(self) -> None:
+        calls = []
+
+        class Cluster:
+            cluster_id = 0xFC00
+
+            async def read_attributes(self, attributes, **kwargs):
+                calls.append(("read", attributes, kwargs))
+
+            def find_attribute(self, attribute, **kwargs):
+                calls.append(("find", attribute, kwargs))
+                return f"{attribute}-definition"
+
+            async def configure_reporting(self, attribute, minimum, maximum, change):
+                calls.append(("reporting", attribute, minimum, maximum, change))
+
+        class Endpoint:
+            in_clusters = {0xFC00: Cluster()}
+            out_clusters = {}
+
+        class ZigpyDevice:
+            endpoints = {1: Endpoint()}
+
+        class Device:
+            _zigpy_device = ZigpyDevice()
+
+        actions = (
+            ConfigureAction(
+                "read",
+                1,
+                0xFC00,
+                attributes=("status",),
+                manufacturer_code=0x115F,
+            ),
+            ConfigureAction(
+                "configure_reporting",
+                1,
+                0xFC00,
+                attributes=("status",),
+                minimum_interval=1,
+                maximum_interval=3600,
+                reportable_change=1,
+                manufacturer_code=0x115F,
+            ),
+        )
+        asyncio.run(_apply_configure_actions(Device(), actions))
+        self.assertEqual(
+            calls,
+            [
+                ("read", ["status"], {"manufacturer": 0x115F}),
+                ("find", "status", {"manufacturer_code": 0x115F}),
+                ("reporting", "status-definition", 1, 3600, 1),
+            ],
+        )
+
+    def test_configure_supports_literal_manufacturer_options(self) -> None:
+        source = """
+        const manufacturerOptions = {manufacturerCode: 0x115f};
+        const reportingInterval = {maximum: 3600};
+        export const definitions = [{
+            zigbeeModel: ["MANUFACTURER_CONFIG"],
+            model: "MANUFACTURER_CONFIG",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await endpoint.read("customCluster", ["status"], manufacturerOptions);
+                await endpoint.configureReporting("customCluster", [
+                    {attribute: "status", minimumReportInterval: 1, maximumReportInterval: reportingInterval.maximum, reportableChange: 1},
+                ], manufacturerOptions);
+            },
+            exposes: [e.numeric("status", ea.STATE)],
+        }];
+        """
+        device = parse_source(source, "manufacturer-configure.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [action.manufacturer_code for action in device.configure_actions],
+            [0x115F, 0x115F],
+        )
+
+    def test_configure_supports_literal_writes(self) -> None:
+        source = """
+        const options = {manufacturerCode: 0x115f};
+        export const definitions = [{
+            zigbeeModel: ["WRITE_CONFIGURE"],
+            model: "Write configure",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await endpoint.write("genBasic", {
+                    52: {value: 0, type: 48},
+                    powerSource: 1,
+                }, options);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-write.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.configure_actions[0].operation, "write")
+        self.assertEqual(device.configure_actions[0].payload, {"52": 0, "powerSource": 1})
+        self.assertEqual(device.configure_actions[0].manufacturer_code, 0x115F)
 
     def test_reporting_bind_and_endpoint_local_are_extracted(self) -> None:
         source = """
@@ -1261,6 +1368,55 @@ class ParserTests(unittest.TestCase):
                 ("configure_reporting", 2, "genOnOff", ("onOff",)),
             ],
         )
+
+    def test_configure_supports_const_assertions_and_endpoint_aliases(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["TYPED_CONFIGURE"],
+            model: "Typed configure",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const clusters = ["genOnOff", "genPowerCfg"] as const;
+                await reporting.bind(endpoint1, coordinatorEndpoint, clusters);
+                for (const cluster of clusters) {
+                    await endpoint1.configureReporting(cluster, [
+                        {attribute: "onOff" as const, minimumReportInterval: 0, maximumReportInterval: 3600, reportableChange: 0},
+                    ]);
+                }
+            },
+        }];
+        """
+        device = parse_source(source, "configure-typed.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.operation, item.endpoint, item.cluster) for item in device.configure_actions],
+            [
+                ("bind", 1, "genOnOff"),
+                ("bind", 1, "genPowerCfg"),
+                ("configure_reporting", 1, "genOnOff"),
+                ("configure_reporting", 1, "genPowerCfg"),
+            ],
+        )
+
+    def test_configure_extracts_actions_from_try_with_empty_catch(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["TRY_CONFIGURE"],
+            model: "Try configure",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                try {
+                    await reporting.bind(endpoint, coordinatorEndpoint, ["genOnOff"]);
+                    await reporting.onOff(endpoint);
+                } catch {
+                }
+            },
+        }];
+        """
+        device = parse_source(source, "configure-try.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual([item.operation for item in device.configure_actions], ["bind", "configure_reporting"])
 
     def test_static_endpoint_object_loops_are_expanded(self) -> None:
         source = """

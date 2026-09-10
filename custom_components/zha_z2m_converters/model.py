@@ -76,6 +76,7 @@ class ConfigureAction:
     command: str | int | None = None
     payload: dict[str, Any] | None = None
     target: str = "coordinator"
+    manufacturer_code: int | None = None
 
 
 @dataclass(frozen=True)
