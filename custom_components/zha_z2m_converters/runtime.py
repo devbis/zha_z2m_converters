@@ -1054,6 +1054,11 @@ def _custom_cluster_factory(spec: CustomClusterSpec) -> Any:
             id=item["id"],
             type=zcl_types[item["type"]],
             access="rw" if item["write"] else "r",
+            **(
+                {"manufacturer_code": item.get("manufacturer_code", spec.manufacturer_code)}
+                if item.get("manufacturer_code", spec.manufacturer_code) is not None
+                else {}
+            ),
         )
         for item in spec.attributes
     }
@@ -1061,6 +1066,11 @@ def _custom_cluster_factory(spec: CustomClusterSpec) -> Any:
         item["name"]: ZCLCommandDef(
             id=item["id"],
             schema={parameter["name"]: zcl_types[parameter["type"]] for parameter in item["parameters"]},
+            **(
+                {"manufacturer_code": item.get("manufacturer_code", spec.manufacturer_code)}
+                if item.get("manufacturer_code", spec.manufacturer_code) is not None
+                else {}
+            ),
         )
         for item in spec.commands
     }

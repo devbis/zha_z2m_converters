@@ -93,6 +93,7 @@ class CustomClusterSpec:
 
     name: str
     cluster_id: int
+    manufacturer_code: int | None = None
     attributes: tuple[dict[str, Any], ...] = ()
     commands: tuple[dict[str, Any], ...] = ()
 

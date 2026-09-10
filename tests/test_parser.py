@@ -986,6 +986,72 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.custom_cluster_specs[0].cluster_id, 0xFC00)
         self.assertEqual(device.custom_cluster_specs[0].attributes[0]["type"], "uint16_t")
 
+    def test_lumi_custom_cluster_macro_is_declarative(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["LUMI"],
+            model: "LUMI",
+            vendor: "Aqara",
+            extend: [lumi.modernExtend.addManuSpecificLumiCluster()],
+        }];
+        """
+        device = parse_source(source, "lumi-custom-cluster.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.custom_cluster_specs[0].name, "manuSpecificLumi")
+        self.assertEqual(device.custom_cluster_specs[0].cluster_id, 0xFCC0)
+        self.assertEqual(device.custom_cluster_specs[0].manufacturer_code, 0x115F)
+        self.assertEqual(len(device.custom_cluster_specs[0].attributes), 8)
+
+    def test_ikea_unknown_cluster_macro_is_declarative(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["IKEA"],
+            model: "IKEA",
+            vendor: "IKEA",
+            extend: [ikea.modernExtend.addCustomClusterManuSpecificIkeaUnknown()],
+        }];
+        """
+        device = parse_source(source, "ikea-unknown-cluster.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.custom_cluster_specs[0].cluster_id, 0xFC7C)
+        self.assertEqual(device.custom_cluster_specs[0].manufacturer_code, 0x117C)
+
+    def test_develco_basic_cluster_macro_is_declarative(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["DEVELCO"],
+            model: "DEVELCO",
+            vendor: "Develco",
+            extend: [develco.modernExtend.addCustomClusterManuSpecificDevelcoGenBasic()],
+        }];
+        """
+        device = parse_source(source, "develco-basic-cluster.ts").devices[0]
+        self.assertFalse(device.partial)
+        spec = device.custom_cluster_specs[0]
+        self.assertEqual(spec.cluster_id, 0x0000)
+        self.assertEqual(spec.attributes[0]["manufacturer_code"], 0x1015)
+        self.assertEqual(spec.attributes[0]["type"], "LVBytes")
+        self.assertEqual(len(spec.attributes), 4)
+
+    def test_develco_fixed_cluster_macros_are_declarative(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["DEVELCO"],
+            model: "DEVELCO",
+            vendor: "Develco",
+            extend: [
+                develco.modernExtend.addCustomClusterManuSpecificDevelcoIasZone(),
+                develco.modernExtend.addCustomClusterManuSpecificDevelcoAirQuality(),
+                develco.modernExtend.addCustomDevelcoSeMeteringCluster(),
+            ],
+        }];
+        """
+        device = parse_source(source, "develco-fixed-clusters.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual([spec.cluster_id for spec in device.custom_cluster_specs], [0x0500, 0xFC03, 0x0702])
+        self.assertEqual(device.custom_cluster_specs[1].manufacturer_code, 0x1015)
+        self.assertEqual(device.custom_cluster_specs[2].attributes[1]["type"], "uint48_t")
+
     def test_tuya_inching_switch_is_expanded_into_writable_entities(self) -> None:
         source = """
         export const definitions = [{

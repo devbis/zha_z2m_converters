@@ -807,6 +807,7 @@ _STATIC_ZCL_TYPES = {
     "UINT8": "uint8_t",
     "UINT16": "uint16_t",
     "UINT32": "uint32_t",
+    "UINT48": "uint48_t",
     "UINT64": "uint64_t",
     "INT8": "int8s",
     "INT16": "int16s",
@@ -814,6 +815,8 @@ _STATIC_ZCL_TYPES = {
     "INT64": "int64s",
     "CHAR_STR": "CharacterString",
     "LONG_CHAR_STR": "LongCharacterString",
+    "OCTET_STR": "LVBytes",
+    "OCTET_STRING": "LVBytes",
     "BUFFER": "LVBytes",
 }
 
@@ -858,6 +861,18 @@ def _static_zcl_type(value: Any) -> str | None:
     return _STATIC_ZCL_TYPES.get(identifier.rsplit(".", 1)[-1].upper())
 
 
+def _static_manufacturer_code(value: Any) -> int | None:
+    """Resolve literal manufacturer codes used by custom cluster definitions."""
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 0xFFFF:
+        return value
+    identifier = _identifier(value)
+    if identifier and identifier.rsplit(".", 1)[-1] == "LUMI_UNITED_TECHOLOGY_LTD_SHENZHEN":
+        return 0x115F
+    if identifier and identifier.rsplit(".", 1)[-1] == "DEVELCO":
+        return 0x1015
+    return None
+
+
 def _custom_cluster_spec(call: Any) -> CustomClusterSpec | None:
     """Parse a literal deviceAddCustomCluster schema into the IR."""
     call_name = _call_name(call) if isinstance(call, dict) else None
@@ -870,6 +885,10 @@ def _custom_cluster_spec(call: Any) -> CustomClusterSpec | None:
     definition = args[1]
     cluster_id = _static_cluster_id(definition.get("ID") if isinstance(definition, dict) else None)
     if not name or cluster_id is None or not isinstance(definition, dict):
+        return None
+    raw_manufacturer_code = definition.get("manufacturerCode")
+    manufacturer_code = _static_manufacturer_code(raw_manufacturer_code) if raw_manufacturer_code is not None else None
+    if raw_manufacturer_code is not None and manufacturer_code is None:
         return None
     raw_attributes = definition.get("attributes", {})
     raw_commands = definition.get("commands", {})
@@ -884,7 +903,18 @@ def _custom_cluster_spec(call: Any) -> CustomClusterSpec | None:
         data_type = _static_zcl_type(raw_attribute.get("type"))
         if not attribute_name or not isinstance(attribute_id, int) or isinstance(attribute_id, bool) or data_type is None:
             return None
-        attributes.append({"name": attribute_name, "id": attribute_id, "type": data_type, "write": raw_attribute.get("write") is True})
+        raw_attribute_manufacturer_code = raw_attribute.get("manufacturerCode")
+        attribute_manufacturer_code = (
+            _static_manufacturer_code(raw_attribute_manufacturer_code)
+            if raw_attribute_manufacturer_code is not None
+            else None
+        )
+        if raw_attribute_manufacturer_code is not None and attribute_manufacturer_code is None:
+            return None
+        attribute = {"name": attribute_name, "id": attribute_id, "type": data_type, "write": raw_attribute.get("write") is True}
+        if raw_attribute_manufacturer_code is not None:
+            attribute["manufacturer_code"] = attribute_manufacturer_code
+        attributes.append(attribute)
     commands: list[dict[str, Any]] = []
     for key, raw_command in raw_commands.items():
         if not isinstance(key, str) or not isinstance(raw_command, dict):
@@ -903,8 +933,98 @@ def _custom_cluster_spec(call: Any) -> CustomClusterSpec | None:
             if not parameter_name or data_type is None:
                 return None
             parsed_parameters.append({"name": parameter_name, "type": data_type})
-        commands.append({"name": command_name, "id": command_id, "parameters": parsed_parameters})
-    return CustomClusterSpec(name, cluster_id, tuple(attributes), tuple(commands))
+        command = {"name": command_name, "id": command_id, "parameters": parsed_parameters}
+        raw_command_manufacturer_code = raw_command.get("manufacturerCode")
+        command_manufacturer_code = (
+            _static_manufacturer_code(raw_command_manufacturer_code)
+            if raw_command_manufacturer_code is not None
+            else None
+        )
+        if raw_command_manufacturer_code is not None and command_manufacturer_code is None:
+            return None
+        if raw_command_manufacturer_code is not None:
+            command["manufacturer_code"] = command_manufacturer_code
+        commands.append(command)
+    return CustomClusterSpec(name, cluster_id, manufacturer_code, tuple(attributes), tuple(commands))
+
+
+def _lumi_cluster_spec() -> CustomClusterSpec:
+    """Return the fixed schema used by lumi.modernExtend.addManuSpecificLumiCluster."""
+    return CustomClusterSpec(
+        "manuSpecificLumi",
+        0xFCC0,
+        0x115F,
+        (
+            {"name": "mode", "id": 0x0009, "type": "uint8_t", "write": True},
+            {"name": "illuminance", "id": 0x0112, "type": "uint32_t", "write": True},
+            {"name": "displayUnit", "id": 0x0114, "type": "uint8_t", "write": True},
+            {"name": "movement", "id": 0x0118, "type": "uint8_t", "write": False},
+            {"name": "airQuality", "id": 0x0129, "type": "uint8_t", "write": True},
+            {"name": "curtainReverse", "id": 0x0400, "type": "Bool", "write": True},
+            {"name": "curtainHandOpen", "id": 0x0401, "type": "Bool", "write": True},
+            {"name": "curtainCalibrated", "id": 0x0402, "type": "Bool", "write": True},
+        ),
+    )
+
+
+def _ikea_unknown_cluster_spec() -> CustomClusterSpec:
+    """Return IKEA's empty manufacturer-specific cluster schema."""
+    return CustomClusterSpec("manuSpecificIkeaUnknown", 0xFC7C, 0x117C)
+
+
+def _develco_gen_basic_cluster_spec() -> CustomClusterSpec:
+    """Return Develco's manufacturer-specific Basic cluster schema."""
+    manufacturer_code = 0x1015
+    return CustomClusterSpec(
+        "genBasic",
+        0x0000,
+        attributes=(
+            {"name": "develcoPrimarySwVersion", "id": 0x8000, "type": "LVBytes", "write": True, "manufacturer_code": manufacturer_code},
+            {"name": "develcoPrimaryHwVersion", "id": 0x8020, "type": "LVBytes", "write": True, "manufacturer_code": manufacturer_code},
+            {"name": "develcoLedControl", "id": 0x8100, "type": "bitmap8", "write": True, "manufacturer_code": manufacturer_code},
+            {"name": "develcoTxPower", "id": 0x8101, "type": "enum8", "write": True, "manufacturer_code": manufacturer_code},
+        ),
+    )
+
+
+def _develco_ias_zone_cluster_spec() -> CustomClusterSpec:
+    """Return Develco's manufacturer-specific IAS Zone schema."""
+    return CustomClusterSpec(
+        "ssIasZone",
+        0x0500,
+        attributes=(
+            {"name": "develcoZoneStatusInterval", "id": 0x8000, "type": "uint16_t", "write": True, "manufacturer_code": 0x1015},
+            {"name": "develcoAlarmOffDelay", "id": 0x8001, "type": "uint16_t", "write": True, "manufacturer_code": 0x1015},
+        ),
+    )
+
+
+def _develco_air_quality_cluster_spec() -> CustomClusterSpec:
+    """Return Develco's manufacturer-specific air-quality schema."""
+    return CustomClusterSpec(
+        "manuSpecificDevelcoAirQuality",
+        0xFC03,
+        0x1015,
+        (
+            {"name": "measuredValue", "id": 0x0000, "type": "uint16_t", "write": True},
+            {"name": "minMeasuredValue", "id": 0x0001, "type": "uint16_t", "write": True},
+            {"name": "maxMeasuredValue", "id": 0x0002, "type": "uint16_t", "write": True},
+            {"name": "resolution", "id": 0x0003, "type": "uint16_t", "write": True},
+        ),
+    )
+
+
+def _develco_se_metering_cluster_spec() -> CustomClusterSpec:
+    """Return Develco's manufacturer-specific metering schema."""
+    return CustomClusterSpec(
+        "seMetering",
+        0x0702,
+        attributes=(
+            {"name": "develcoPulseConfiguration", "id": 0x0300, "type": "uint16_t", "write": True, "manufacturer_code": 0x1015},
+            {"name": "develcoCurrentSummation", "id": 0x0301, "type": "uint48_t", "write": True, "manufacturer_code": 0x1015},
+            {"name": "develcoInterfaceMode", "id": 0x0302, "type": "enum16", "write": True, "manufacturer_code": 0x1015},
+        ),
+    )
 
 
 def _endpoint_map(value: Any) -> dict[str, int]:
@@ -1194,6 +1314,20 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         return [], [], name, True
     if name == "deviceAddCustomCluster":
         return [], [], name, _custom_cluster_spec(call) is not None
+    if name == "addManuSpecificLumiCluster":
+        return [], [], name, True
+    if name == "addCustomClusterManuSpecificIkeaUnknown":
+        return [], [], name, True
+    if name == "addCustomClusterManuSpecificDevelcoGenBasic":
+        return [], [], name, True
+    if name in {
+        "addCustomClusterManuSpecificDevelcoIasZone",
+        "addCustomClusterManuSpecificDevelcoAirQuality",
+        "addCustomDevelcoSeMeteringCluster",
+    }:
+        return [], [], name, True
+    if name == "readGenBasicPrimaryVersions":
+        return [], [], name, True
     if name == "addTuyaCommonPrivateCluster":
         # The cluster schema is fixed in lib/tuya.ts. Keep this macro separate
         # from generic custom-cluster parsing until a declarative schema path
@@ -2354,6 +2488,28 @@ def _device(raw: dict[str, Any], token: Token, filename: str, diagnostics: list[
                 configure_actions.append(ConfigureAction("bind", 1, "genBasic"))
         if name == "addTuyaCommonPrivateCluster":
             custom_clusters.append("manuSpecificTuya4")
+        if name == "addManuSpecificLumiCluster":
+            custom_cluster_specs.append(_lumi_cluster_spec())
+        if name == "addCustomClusterManuSpecificIkeaUnknown":
+            custom_cluster_specs.append(_ikea_unknown_cluster_spec())
+        if name == "addCustomClusterManuSpecificDevelcoGenBasic":
+            custom_cluster_specs.append(_develco_gen_basic_cluster_spec())
+        if name == "addCustomClusterManuSpecificDevelcoIasZone":
+            custom_cluster_specs.append(_develco_ias_zone_cluster_spec())
+        if name == "addCustomClusterManuSpecificDevelcoAirQuality":
+            custom_cluster_specs.append(_develco_air_quality_cluster_spec())
+        if name == "addCustomDevelcoSeMeteringCluster":
+            custom_cluster_specs.append(_develco_se_metering_cluster_spec())
+        if name == "readGenBasicPrimaryVersions":
+            configure_actions.append(
+                ConfigureAction(
+                    "read",
+                    1,
+                    "genBasic",
+                    attributes=("develcoPrimarySwVersion", "develcoPrimaryHwVersion"),
+                    target="device",
+                )
+            )
         custom_cluster_spec = _custom_cluster_spec(item)
         if custom_cluster_spec is not None:
             custom_cluster_specs.append(custom_cluster_spec)
