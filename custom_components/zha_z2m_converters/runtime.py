@@ -232,7 +232,7 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
     normalized = normalize_device(source)
     entities = []
     for expose in normalized.exposes:
-        binding = _binding_for_expose(expose, normalized.from_zigbee)
+        binding = _binding_for_expose(expose, [*normalized.from_zigbee, *normalized.to_zigbee])
         entities.append(
             RuntimeEntity(
                 name=expose.name,
@@ -393,6 +393,37 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
         )
         if specialized_binding is not None:
             return specialized_binding
+    lumi_converter_aliases = {
+        "operation_mode": (
+            "lumi_switch_operation_mode_opple",
+            "lumi_operation_mode_opple",
+            "lumi_switch_operation_mode_basic",
+        ),
+        "flip_indicator_light": ("lumi_flip_indicator_light",),
+        "led_disabled_night": ("lumi_led_disabled_night",),
+        "mode_switch": ("lumi_switch_mode_switch",),
+        "power_outage_memory": ("lumi_switch_power_outage_memory",),
+        "switch_type": ("lumi_switch_type",),
+        "button_switch_mode": ("lumi_button_switch_mode",),
+        "button_lock": ("lumi_socket_button_lock",),
+        "auto_off": ("lumi_auto_off",),
+        "motion_sensitivity": ("lumi_motion_sensitivity",),
+        "click_mode": ("lumi_switch_click_mode",),
+        "selftest": ("lumi_selftest",),
+        "overload_protection": ("lumi_overload_protection",),
+        "detection_interval": ("lumi_detection_interval",),
+    }
+    lumi_converter_alias = lumi_converter_aliases.get(expose.name, ())
+    lumi_binding = next(
+        (
+            item
+            for item in bindings
+            if item.converter.rsplit(".", 1)[-1] in lumi_converter_alias
+        ),
+        None,
+    )
+    if lumi_binding is not None:
+        return lumi_binding
     semantic = {
         "temperature": "temperature",
         "humidity": "humidity",

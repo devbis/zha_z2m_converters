@@ -228,6 +228,126 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(apply_report(plan, RuntimeReport("genBasic", 150, 2300)), {"voltage": 230})
         self.assertEqual(apply_report(plan, RuntimeReport("genBasic", 151, 1250)), {"current": 1.25})
 
+    def test_lumi_switch_writes_use_manufacturer_cluster_and_lookups(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Lumi switch",
+            vendor: "Aqara",
+            toZigbee: [
+                lumi.toZigbee.lumi_switch_operation_mode_opple,
+                lumi.toZigbee.lumi_flip_indicator_light,
+                lumi.toZigbee.lumi_switch_mode_switch,
+            ],
+            exposes: [
+                e.enum("operation_mode", ea.ALL, ["control_relay", "decoupled"]).withAccess("STATE_SET"),
+                e.binary("flip_indicator_light", ea.ALL, "ON", "OFF").withAccess("STATE_SET"),
+                e.enum("mode_switch", ea.ALL, ["quick_mode", "anti_flicker_mode"]).withAccess("STATE_SET"),
+            ],
+            extend: [lumi.modernExtend.addManuSpecificLumiCluster()],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-switch.ts").devices[0])
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute) for item in plan.entities],
+            [
+                ("operation_mode", "manuSpecificLumi", 0x0200),
+                ("flip_indicator_light", "manuSpecificLumi", 0x00F0),
+                ("mode_switch", "manuSpecificLumi", 0x0004),
+            ],
+        )
+        self.assertEqual(make_write(plan, "operation_mode", "control_relay").value, 1)
+        self.assertEqual(make_write(plan, "flip_indicator_light", True).value, 1)
+        self.assertEqual(make_write(plan, "mode_switch", "anti_flicker_mode").value, 4)
+
+    def test_lumi_simple_settings_use_static_manufacturer_attributes(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "ZNCZ04LM",
+            vendor: "Aqara",
+            toZigbee: [
+                lumi.toZigbee.lumi_switch_type,
+                lumi.toZigbee.lumi_button_switch_mode,
+                lumi.toZigbee.lumi_socket_button_lock,
+                lumi.toZigbee.lumi_auto_off,
+                lumi.toZigbee.lumi_motion_sensitivity,
+                lumi.toZigbee.lumi_switch_click_mode,
+                lumi.toZigbee.lumi_selftest,
+                lumi.toZigbee.lumi_overload_protection,
+                lumi.toZigbee.lumi_detection_interval,
+            ],
+            exposes: [
+                e.enum("switch_type", ea.ALL, ["toggle", "momentary", "none"]).withAccess("STATE_SET"),
+                e.enum("button_switch_mode", ea.ALL, ["relay", "relay_and_usb"]).withAccess("STATE_SET"),
+                e.binary("button_lock", ea.ALL, "ON", "OFF").withAccess("STATE_SET"),
+                e.binary("auto_off", ea.ALL, "ON", "OFF").withAccess("STATE_SET"),
+                e.enum("motion_sensitivity", ea.ALL, ["low", "medium", "high"]).withAccess("STATE_SET"),
+                e.enum("click_mode", ea.ALL, ["fast", "multi"]).withAccess("STATE_SET"),
+                e.binary("selftest", ea.ALL, "ON", "OFF").withAccess("STATE_SET"),
+                e.numeric("overload_protection", ea.ALL).withAccess("STATE_SET"),
+                e.numeric("detection_interval", ea.ALL).withAccess("STATE_SET"),
+            ],
+            extend: [lumi.modernExtend.addManuSpecificLumiCluster()],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-settings.ts").devices[0])
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute) for item in plan.entities],
+            [
+                ("switch_type", "manuSpecificLumi", 0x000A),
+                ("button_switch_mode", "manuSpecificLumi", 0x0226),
+                ("button_lock", "manuSpecificLumi", 0x0200),
+                ("auto_off", "manuSpecificLumi", 0x0202),
+                ("motion_sensitivity", "manuSpecificLumi", 0x010C),
+                ("click_mode", "manuSpecificLumi", 0x0125),
+                ("selftest", "manuSpecificLumi", 0x0127),
+                ("overload_protection", "manuSpecificLumi", 0x020B),
+                ("detection_interval", "manuSpecificLumi", 0x0102),
+            ],
+        )
+        self.assertEqual(make_write(plan, "switch_type", "momentary").value, 2)
+        self.assertEqual(make_write(plan, "button_switch_mode", "relay_and_usb").value, 1)
+        self.assertEqual(make_write(plan, "button_lock", "OFF").value, 1)
+        self.assertEqual(make_write(plan, "auto_off", True).value, 1)
+        self.assertEqual(make_write(plan, "motion_sensitivity", "high").value, 3)
+        self.assertEqual(make_write(plan, "click_mode", "multi").value, 2)
+        self.assertEqual(make_write(plan, "selftest", True).value, 1)
+        self.assertEqual(make_write(plan, "overload_protection", 2300).value, 2300)
+        self.assertEqual(make_write(plan, "detection_interval", 30).value, 30)
+
+    def test_lumi_model_specific_attribute_paths_are_preserved(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "QBKG38LM",
+            vendor: "Aqara",
+            toZigbee: [lumi.toZigbee.lumi_switch_power_outage_memory],
+            exposes: [e.enum("power_outage_memory", ea.ALL, ["electric_appliances_on", "on", "electric_appliances_off", "inverted"]).withAccess("STATE_SET")],
+            extend: [lumi.modernExtend.addManuSpecificLumiCluster()],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-model-specific.ts").devices[0])
+        self.assertEqual(plan.entities[0].attribute, 0x0517)
+        self.assertEqual(make_write(plan, "power_outage_memory", "electric_appliances_off").value, 2)
+
+    def test_lumi_single_switch_operation_mode_uses_manufacturer_basic_attribute(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "QBKG11LM",
+            vendor: "Aqara",
+            fromZigbee: [lumi.fromZigbee.lumi_operation_mode_basic],
+            toZigbee: [lumi.toZigbee.lumi_switch_operation_mode_basic],
+            exposes: [e.enum("operation_mode", ea.ALL, ["control_relay", "decoupled"]).withAccess("STATE_SET")],
+        }];
+        """
+        device = parse_source(source, "lumi-basic-operation-mode.ts").devices[0]
+        plan = build_runtime_plan(device)
+        self.assertEqual(len(plan.custom_cluster_specs), 1)
+        self.assertEqual((plan.entities[0].cluster, plan.entities[0].attribute), ("genBasic", 0xFF22))
+        self.assertEqual(make_write(plan, "operation_mode", "decoupled").value, 0xFE)
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("genBasic", 0xFF22, 0x12)),
+            {"operation_mode": "control_relay"},
+        )
+
     def test_standard_converter_aliases_are_normalized_to_zcl(self) -> None:
         source = """
         export const definitions = [{
@@ -1000,7 +1120,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.custom_cluster_specs[0].name, "manuSpecificLumi")
         self.assertEqual(device.custom_cluster_specs[0].cluster_id, 0xFCC0)
         self.assertEqual(device.custom_cluster_specs[0].manufacturer_code, 0x115F)
-        self.assertEqual(len(device.custom_cluster_specs[0].attributes), 8)
+        self.assertEqual(len(device.custom_cluster_specs[0].attributes), 21)
 
     def test_ikea_unknown_cluster_macro_is_declarative(self) -> None:
         source = """

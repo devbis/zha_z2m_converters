@@ -49,6 +49,23 @@ CONVERTER_MAP: dict[str, tuple[str, str | None, str]] = {
     "lumi_pm25": ("pm25Measurement", "measuredValue", "report"),
     "lumi_power": ("genAnalogInput", "presentValue", "report"),
     "lumi_basic": ("genBasic", None, "report"),
+    "lumi_switch_operation_mode_opple": ("manuSpecificLumi", 0x0200, "command"),
+    "lumi_operation_mode_opple": ("manuSpecificLumi", 0x0009, "command"),
+    "lumi_operation_mode_basic": ("genBasic", 0xFF22, "report"),
+    "lumi_switch_operation_mode_basic": ("genBasic", 0xFF22, "command"),
+    "lumi_flip_indicator_light": ("manuSpecificLumi", 0x00F0, "command"),
+    "lumi_led_disabled_night": ("manuSpecificLumi", 0x0203, "command"),
+    "lumi_switch_mode_switch": ("manuSpecificLumi", 0x0004, "command"),
+    "lumi_switch_power_outage_memory": ("manuSpecificLumi", 0x0201, "command"),
+    "lumi_switch_type": ("manuSpecificLumi", 0x000A, "command"),
+    "lumi_button_switch_mode": ("manuSpecificLumi", 0x0226, "command"),
+    "lumi_socket_button_lock": ("manuSpecificLumi", 0x0200, "command"),
+    "lumi_auto_off": ("manuSpecificLumi", 0x0202, "command"),
+    "lumi_motion_sensitivity": ("manuSpecificLumi", 0x010C, "command"),
+    "lumi_switch_click_mode": ("manuSpecificLumi", 0x0125, "command"),
+    "lumi_selftest": ("manuSpecificLumi", 0x0127, "command"),
+    "lumi_overload_protection": ("manuSpecificLumi", 0x020B, "command"),
+    "lumi_detection_interval": ("manuSpecificLumi", 0x0102, "command"),
     "co2": ("msCO2", "measuredValue", "report"),
     "pm25": ("pm25Measurement", "measuredValue", "report"),
     "flow": ("msFlowMeasurement", "measuredValue", "report"),
@@ -157,6 +174,49 @@ LUMI_BASIC_ATTRIBUTE_MAP = {
     "current": (151, 1000),
 }
 
+LUMI_WRITE_EXPRESSIONS = {
+    "lumi_switch_operation_mode_opple": {"0": "decoupled", "1": "control_relay"},
+    "lumi_operation_mode_opple": {"0": "command", "1": "event"},
+    "lumi_operation_mode_basic": {"18": "control_relay", "254": "decoupled"},
+    "lumi_switch_operation_mode_basic": {"18": "control_relay", "254": "decoupled"},
+    "lumi_flip_indicator_light": {"0": False, "1": True},
+    "lumi_led_disabled_night": {"0": False, "1": True},
+    "lumi_switch_mode_switch": {"1": "quick_mode", "4": "anti_flicker_mode"},
+    "lumi_switch_power_outage_memory": {"0": False, "1": True},
+    "lumi_switch_type": {"1": "toggle", "2": "momentary", "3": "none"},
+    "lumi_button_switch_mode": {"0": "relay", "1": "relay_and_usb"},
+    "lumi_socket_button_lock": {"0": "ON", "1": "OFF"},
+    "lumi_auto_off": {"0": False, "1": True},
+    "lumi_motion_sensitivity": {"1": "low", "2": "medium", "3": "high"},
+    "lumi_switch_click_mode": {"1": "fast", "2": "multi"},
+    "lumi_selftest": {"0": False, "1": True},
+}
+
+LUMI_POWER_OUTAGE_MODELS = {
+    "QBKG38LM",
+    "QBKG39LM",
+    "QBKG40LM",
+    "QBKG41LM",
+}
+
+LUMI_SINGLE_OPERATION_MODE_BASIC_MODELS = {"QBKG04LM", "QBKG11LM", "QBKG21LM", "QBKG23LM"}
+
+LUMI_POWER_OUTAGE_MEMORY_MANU_MODELS = {
+    "SP-EUC01", "ZNCZ04LM", "ZNCZ15LM", "QBCZ14LM", "QBCZ15LM", "SSM-U01", "SSM-U02",
+    "DLKZMK11LM", "DLKZMK12LM", "WS-EUK01", "WS-EUK02", "WS-EUK03", "WS-EUK04",
+    "QBKG17LM", "QBKG18LM", "QBKG19LM", "QBKG20LM", "QBKG25LM", "QBKG26LM", "QBKG27LM",
+    "QBKG28LM", "QBKG29LM", "QBKG30LM", "QBKG31LM", "QBKG32LM", "QBKG33LM", "QBKG34LM",
+    "QBKG38LM", "QBKG39LM", "QBKG40LM", "QBKG41LM", "ZNDDMK11LM", "ZNLDP13LM", "ZNQBKG31LM",
+    "WS-USC02", "WS-USC03", "WS-USC04", "ZNQBKG24LM", "ZNQBKG25LM", "ZNQBKG26LM", "JWDL001A",
+    "SSWQD02LM", "SSWQD03LM", "XDD11LM", "XDD12LM", "XDD13LM", "ZNLDP12LM", "ZNXDD01LM", "WS-USC01",
+}
+
+LUMI_AUTO_OFF_MANU_MODELS = {"ZNCZ04LM", "ZNCZ12LM", "SP-EUC01"}
+LUMI_CLICK_MODE_ALT_MODELS = {"ZNQBKG38LM", "ZNQBKG39LM", "ZNQBKG40LM", "ZNQBKG41LM"}
+LUMI_SELFTEST_ENCODED_MODELS = {"JTYJ-GD-01LM/BW", "JTQJ-BF-01LM/BW"}
+
+LUMI_LED_DISABLED_NIGHT_UNSUPPORTED_MODELS = {"ZNCZ11LM"}
+
 
 def normalize_device(device: DeviceDefinition) -> DeviceDefinition:
     """Fill standard cluster bindings from expose and converter names."""
@@ -172,6 +232,9 @@ def normalize_device(device: DeviceDefinition) -> DeviceDefinition:
         converter_name = binding.converter.rsplit(".", 1)[-1]
         mapped = CONVERTER_MAP.get(converter_name)
         if mapped and binding.cluster is None:
+            if converter_name in {"lumi_operation_mode_basic", "lumi_switch_operation_mode_basic"} and device.model not in LUMI_SINGLE_OPERATION_MODE_BASIC_MODELS:
+                normalized_from.append(binding)
+                continue
             cluster, attribute, direction = mapped
             scale = CONVERTER_SCALES.get(converter_name)
             expression = Expression("divide", (scale,)) if scale else binding.expression
@@ -181,6 +244,8 @@ def normalize_device(device: DeviceDefinition) -> DeviceDefinition:
                 expression = Expression("floor")
             elif converter_name == "co2" and direction == "report":
                 expression = Expression("floor", (Expression("multiply", (1_000_000,)),))
+            elif converter_name == "lumi_operation_mode_basic" and direction == "report":
+                expression = Expression("lookup", (LUMI_WRITE_EXPRESSIONS[converter_name],))
             normalized_from.append(
                 replace(binding, cluster=cluster, attribute=attribute, direction=direction, expression=expression)
             )
@@ -210,8 +275,45 @@ def normalize_device(device: DeviceDefinition) -> DeviceDefinition:
         converter_name = binding.converter.rsplit(".", 1)[-1]
         mapped = CONVERTER_MAP.get(converter_name)
         if mapped and binding.cluster is None:
+            if converter_name == "lumi_switch_operation_mode_basic" and device.model not in LUMI_SINGLE_OPERATION_MODE_BASIC_MODELS:
+                normalized_to.append(binding)
+                continue
             cluster, attribute, _ = mapped
-            normalized_to.append(replace(binding, cluster=cluster, attribute=attribute, direction="command"))
+            expression = None
+            if converter_name == "lumi_switch_power_outage_memory":
+                if device.model in LUMI_POWER_OUTAGE_MODELS:
+                    attribute = 0x0517
+                    expression = Expression(
+                        "lookup",
+                        ({"0": "electric_appliances_on", "1": "on", "2": "electric_appliances_off", "3": "inverted"},),
+                    )
+                elif device.model in LUMI_POWER_OUTAGE_MEMORY_MANU_MODELS:
+                    expression = Expression("lookup", (LUMI_WRITE_EXPRESSIONS[converter_name],))
+                else:
+                    normalized_to.append(binding)
+                    continue
+            elif converter_name == "lumi_led_disabled_night" and device.model in LUMI_LED_DISABLED_NIGHT_UNSUPPORTED_MODELS:
+                normalized_to.append(binding)
+                continue
+            elif converter_name == "lumi_auto_off" and device.model not in LUMI_AUTO_OFF_MANU_MODELS:
+                normalized_to.append(binding)
+                continue
+            elif converter_name == "lumi_switch_click_mode" and device.model in LUMI_CLICK_MODE_ALT_MODELS:
+                attribute = 0x0286
+            elif converter_name == "lumi_selftest" and device.model in LUMI_SELFTEST_ENCODED_MODELS:
+                normalized_to.append(binding)
+                continue
+            elif converter_name in LUMI_WRITE_EXPRESSIONS:
+                expression = Expression("lookup", (LUMI_WRITE_EXPRESSIONS[converter_name],))
+            normalized_to.append(
+                replace(
+                    binding,
+                    cluster=cluster,
+                    attribute=attribute,
+                    direction="command",
+                    expression=expression,
+                )
+            )
         else:
             normalized_to.append(binding)
     return replace(device, exposes=exposes, from_zigbee=normalized_from, to_zigbee=normalized_to)

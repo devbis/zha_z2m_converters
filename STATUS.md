@@ -9,9 +9,9 @@ the safe declarative translation to ZHA.
 | Status | Definitions | Share |
 |---|---:|---:|
 | Fully supported | 2,550 | 56.9% |
-| Usable partial | 1,608 | 35.9% |
+| Usable partial | 1,615 | 36.1% |
 | Metadata only | 11 | 0.2% |
-| Unusable partial | 305 | 6.8% |
+| Unusable partial | 298 | 6.7% |
 | Rejected | 4 | 0.1% |
 | **Total** | **4,478** | **100%** |
 
@@ -19,10 +19,10 @@ the safe declarative translation to ZHA.
 
 | Problem | Definitions |
 |---|---:|
-| unsupported converter binding | 837 |
+| unsupported converter binding | 836 |
 | unsupported extend macro | 631 |
-| dynamic expose or other expression | 305 |
-| no usable data path | 305 |
+| dynamic expose or other expression | 306 |
+| no usable data path | 298 |
 | unsupported definition field | 140 |
 
 ### Unsupported extend macros
@@ -57,10 +57,6 @@ the safe declarative translation to ZHA.
 |---|---:|
 | `lumi_specific` | 77 |
 | `lumi_action_multistate` | 52 |
-| `lumi_switch_power_outage_memory` | 39 |
-| `lumi_switch_operation_mode_opple` | 24 |
-| `lumi_flip_indicator_light` | 24 |
-| `lumi_led_disabled_night` | 24 |
 | `cluster_fc01` | 21 |
 | `tuya_switch_state` | 19 |
 | `led_mode` | 18 |
@@ -75,7 +71,11 @@ the safe declarative translation to ZHA.
 | `command_move_hue` | 12 |
 | `operation_mode` | 12 |
 | `sihas_action` | 12 |
-| *998 more items* | — |
+| `lock_programming_event` | 11 |
+| `lock_pin_code_response` | 11 |
+| `ias_contact_alarm_1_report` | 11 |
+| `datapoints` | 11 |
+| *981 more items* | — |
 
 ### Unsupported definition fields
 
@@ -155,17 +155,17 @@ Categories can overlap when one definition has several different gaps.
 | `utils.attachOutputCluster` | 5 |
 | `m.setupAttributes` | 4 |
 | `utils.sleep` | 3 |
-| `heiman.configureReporting.batteryState` | 2 |
 | `heiman.configureReporting.pm10measuredValue` | 2 |
+| `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
 | `heiman.configureReporting.aqiMeasuredValue` | 2 |
 | `heiman.configureReporting.pm25MeasuredValue` | 2 |
-| `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
+| `heiman.configureReporting.batteryState` | 2 |
 | `syncTime` | 2 |
 | `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `initConfig` | 1 |
 | `logger.debug` | 1 |
+| `initConfig` | 1 |
 | `heiman.configureReporting.tvocMeasuredValue` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
@@ -184,8 +184,8 @@ Categories can overlap when one definition has several different gaps.
 | `reporting.humidity` | 3 |
 | `reporting.co2` | 1 |
 | `reporting.onOff` | 1 |
-| `reporting.thermostatOccupiedHeatingSetpoint` | 1 |
 | `reporting.thermostatTemperature` | 1 |
+| `reporting.thermostatOccupiedHeatingSetpoint` | 1 |
 | `reporting.thermostatPIHeatingDemand` | 1 |
 
 ### Configure: direct or unsupported configure expression

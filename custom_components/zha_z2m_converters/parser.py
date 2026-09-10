@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .lexer import Token, tokenize
-from .mapping import CONVERTER_MAP
+from .mapping import CONVERTER_MAP, LUMI_SINGLE_OPERATION_MODE_BASIC_MODELS
 from .model import (
     Binding,
     ConfigureAction,
@@ -934,6 +934,8 @@ _STATIC_ZCL_TYPES = {
     "UINT32": "uint32_t",
     "UINT48": "uint48_t",
     "UINT64": "uint64_t",
+    "SINGLE": "Single",
+    "FLOAT32": "Single",
     "INT8": "int8s",
     "INT16": "int16s",
     "INT32": "int32s",
@@ -1081,13 +1083,38 @@ def _lumi_cluster_spec() -> CustomClusterSpec:
         0x115F,
         (
             {"name": "mode", "id": 0x0009, "type": "uint8_t", "write": True},
+            {"name": "switchMode", "id": 0x0004, "type": "uint16_t", "write": True},
             {"name": "illuminance", "id": 0x0112, "type": "uint32_t", "write": True},
             {"name": "displayUnit", "id": 0x0114, "type": "uint8_t", "write": True},
             {"name": "movement", "id": 0x0118, "type": "uint8_t", "write": False},
             {"name": "airQuality", "id": 0x0129, "type": "uint8_t", "write": True},
+            {"name": "flipIndicatorLight", "id": 0x00F0, "type": "uint8_t", "write": True},
+            {"name": "operationMode", "id": 0x0200, "type": "uint8_t", "write": True},
+            {"name": "powerOutageMemory", "id": 0x0201, "type": "Bool", "write": True},
+            {"name": "ledDisabledNight", "id": 0x0203, "type": "Bool", "write": True},
+            {"name": "autoOff", "id": 0x0202, "type": "Bool", "write": True},
+            {"name": "detectionInterval", "id": 0x0102, "type": "uint8_t", "write": True},
+            {"name": "motionSensitivity", "id": 0x010C, "type": "uint8_t", "write": True},
+            {"name": "clickMode", "id": 0x0125, "type": "uint8_t", "write": True},
+            {"name": "clickModeAlt", "id": 0x0286, "type": "uint8_t", "write": True},
+            {"name": "selftest", "id": 0x0127, "type": "Bool", "write": True},
+            {"name": "overloadProtection", "id": 0x020B, "type": "Single", "write": True},
+            {"name": "powerOutageMode", "id": 0x0517, "type": "uint8_t", "write": True},
             {"name": "curtainReverse", "id": 0x0400, "type": "Bool", "write": True},
             {"name": "curtainHandOpen", "id": 0x0401, "type": "Bool", "write": True},
             {"name": "curtainCalibrated", "id": 0x0402, "type": "Bool", "write": True},
+        ),
+    )
+
+
+def _lumi_basic_operation_mode_cluster_spec() -> CustomClusterSpec:
+    """Return the manufacturer-specific attributes used by single-gang Lumi switches."""
+    return CustomClusterSpec(
+        "genBasic",
+        0x0000,
+        attributes=(
+            {"name": "lumiOperationModeLeft", "id": 0xFF22, "type": "uint8_t", "write": True, "manufacturer_code": 0x115F},
+            {"name": "lumiOperationModeRight", "id": 0xFF23, "type": "uint8_t", "write": True, "manufacturer_code": 0x115F},
         ),
     )
 
@@ -2799,6 +2826,15 @@ def _device(
     if endpoint_map:
         exposes = [replace(expose, endpoint=_resolve_endpoint(expose.endpoint, endpoint_map)) for expose in exposes]
         from_zigbee = [replace(binding, endpoint=_resolve_endpoint(binding.endpoint, endpoint_map)) for binding in from_zigbee]
+    converter_names = {
+        binding.converter.rsplit(".", 1)[-1]
+        for binding in [*from_zigbee, *to_zigbee]
+    }
+    if model in LUMI_SINGLE_OPERATION_MODE_BASIC_MODELS and converter_names & {
+        "lumi_operation_mode_basic",
+        "lumi_switch_operation_mode_basic",
+    }:
+        custom_cluster_specs.append(_lumi_basic_operation_mode_cluster_spec())
     if dynamic_extend:
         unsupported_macros.append("dynamic-expression")
     partial = bool(unsupported_macros or unsupported_fields)
