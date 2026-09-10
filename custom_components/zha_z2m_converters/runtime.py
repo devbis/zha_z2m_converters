@@ -27,6 +27,7 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "level_control": 0x0008,
     "genPowerCfg": 0x0001,
     "genBinaryInput": 0x001F,
+    "genMultistateInput": 0x0012,
     "power_configuration": 0x0001,
     "genDeviceTempCfg": 0x0002,
     "msTemperatureMeasurement": 0x0402,
@@ -95,6 +96,7 @@ class RuntimeEntity:
     dp: int | None = None
     endpoint: str | int | None = None
     access: tuple[str, ...] = ()
+    converter: str | None = None
 
 
 @dataclass(frozen=True)
@@ -243,6 +245,7 @@ def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None =
                 dp=binding.dp if binding else None,
                 endpoint=expose.endpoint,
                 access=expose.access,
+                converter=binding.converter if binding else None,
             )
         )
     return RuntimePlan(
@@ -264,16 +267,40 @@ def apply_report(plan: RuntimePlan, report: RuntimeReport) -> dict[str, Any]:
             not _same_cluster(entity.cluster, report.cluster)
             or not _same_attribute(entity.attribute, report.attribute)
             or entity.dp != report.dp
-            or (report.endpoint is not None and entity.endpoint != report.endpoint)
+            or (report.endpoint is not None and entity.endpoint not in {None, report.endpoint})
         ):
+            if entity.property == "action":
+                auxiliary_action_binding = next(
+                    (
+                        item
+                        for item in plan.bindings
+                        if (
+                            item.converter == "lumiSlider_action"
+                            or item.converter.startswith("lumiVibration_")
+                            or item.converter == "lumiStaticStateAction"
+                        )
+                        and item.direction in {"report", "event"}
+                        and _same_cluster(item.cluster, report.cluster)
+                        and _same_attribute(item.attribute, report.attribute)
+                    ),
+                    None,
+                )
+                if auxiliary_action_binding is not None:
+                    result[entity.property] = _apply_expression(report.value, auxiliary_action_binding, report.endpoint)
+                    continue
             continue
         for binding in plan.bindings:
             if binding.direction not in {"report", "event"}:
                 continue
-            if _same_cluster(binding.cluster, entity.cluster) and _same_attribute(binding.attribute, entity.attribute):
+            if (
+                _same_cluster(binding.cluster, entity.cluster)
+                and _same_attribute(binding.attribute, entity.attribute)
+                and (binding.endpoint is None or binding.endpoint == entity.endpoint)
+                and (entity.converter is None or binding.converter == entity.converter)
+            ):
                 if binding.dp != report.dp:
                     continue
-                result[entity.property] = _apply_expression(report.value, binding)
+                result[entity.property] = _apply_expression(report.value, binding, report.endpoint)
                 break
     return result
 
@@ -331,15 +358,38 @@ def _write_binding(plan: RuntimePlan, entity: RuntimeEntity, property_name: str)
         )
         if countdown_binding is not None:
             return countdown_binding
-    return next(
-        (
+    preferred_converter = {
+        "multi_click": "lumiMultiClick",
+        "click_mode": "lumiClickMode",
+        "action": "lumiAction",
+    }.get(property_name)
+    candidates = (
+        item
+        for item in plan.bindings
+        if _same_cluster(item.cluster, entity.cluster)
+        and _same_attribute(item.attribute, entity.attribute)
+        and item.dp == entity.dp
+        and (item.endpoint is None or item.endpoint == entity.endpoint)
+        and item.direction in {"command", "report", "event"}
+    )
+    if preferred_converter is not None:
+        preferred = next(
+            (item for item in candidates if item.converter.rsplit(".", 1)[-1] == preferred_converter),
+            None,
+        )
+        if preferred is not None:
+            return preferred
+        candidates = (
             item
             for item in plan.bindings
             if _same_cluster(item.cluster, entity.cluster)
             and _same_attribute(item.attribute, entity.attribute)
             and item.dp == entity.dp
+            and (item.endpoint is None or item.endpoint == entity.endpoint)
             and item.direction in {"command", "report", "event"}
-        ),
+        )
+    return next(
+        candidates,
         None,
     )
 
@@ -381,7 +431,8 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
         "pm25": ("lumi_pm25",),
         "power": ("lumi_power", "lumiPower"),
         "energy": ("lumiElectricityMeter_energy",),
-        "voltage": ("lumiElectricityMeter_voltage",),
+        "voltage": ("lumiElectricityMeter_voltage", "lumiBattery_voltage"),
+        "battery": ("lumiBattery_battery",),
         "current": ("lumiElectricityMeter_current",),
     }
     converter_alias = converter_aliases.get(expose.name, ())
@@ -400,8 +451,10 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
         "operation_mode": (
             "lumi_switch_operation_mode_opple",
             "lumi_operation_mode_opple",
+            "lumi_operation_mode_basic",
             "lumi_switch_operation_mode_basic",
             "lumiOperationMode",
+            "lumiCommandMode",
         ),
         "flip_indicator_light": ("lumi_flip_indicator_light", "lumiFlipIndicatorLight"),
         "led_disabled_night": ("lumi_led_disabled_night", "lumiLedDisabledNight"),
@@ -414,6 +467,7 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
         "button_lock": ("lumi_socket_button_lock", "lumiButtonLock"),
         "child_lock": ("lumiChildLock",),
         "lock_relay": ("lumiLockRelay",),
+        "multi_click": ("lumiMultiClick",),
         "auto_off": ("lumi_auto_off",),
         "motion_sensitivity": ("lumi_motion_sensitivity",),
         "click_mode": ("lumi_switch_click_mode", "lumiClickMode"),
@@ -424,6 +478,32 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
         "dimming_range_maximum": ("lumiDimmingRangeMax",),
         "off_on_duration": ("lumiOffOnDuration",),
         "on_off_duration": ("lumiOnOffDuration",),
+        "motor_speed": ("lumiMotorSpeed",),
+        "transition_curve_curvature": ("lumiTransitionCurveCurvature",),
+        "transition_initial_brightness": ("lumiTransitionInitialBrightness",),
+        "manual_open_close": ("lumiCurtainManualOpenClose",),
+        "adaptive_pulling_speed": ("lumiCurtainAdaptivePullingSpeed",),
+        "manual_stop": ("lumiCurtainManualStop",),
+        "status": ("lumiCurtainStatus",),
+        "last_manual_operation": ("lumiCurtainLastManualOperation",),
+        "calibration_status": ("lumiCurtainCalibrationStatus",),
+        "calibrated": ("lumiCurtainCalibrated",),
+        "identify_beep": ("lumiCurtainIdentifyBeep",),
+        "curtain_speed": ("lumiCurtainSpeed",),
+        "curtain_position": ("lumiCurtainPosition",),
+        "traverse_time": ("lumiCurtainTraverseTime",),
+        "action_slide_time": ("lumiSlider_action_slide_time",),
+        "action_slide_speed": ("lumiSlider_action_slide_speed",),
+        "action_slide_relative_displacement": ("lumiSlider_action_slide_relative_displacement",),
+        "action_slide_time_delta": ("lumiSlider_action_slide_time_delta",),
+        "effect": ("lumiRGBEffect",),
+        "effect_speed": ("lumiRGBEffectSpeed",),
+        "voc": ("lumiVoc",),
+        "air_quality": ("lumiAirQuality",),
+        "display_unit": ("lumiDisplayUnit",),
+        "sensitivity_adjustment": ("lumiSensitivityAdjustment",),
+        "report_interval": ("lumiReportInterval",),
+        "action": ("lumiAction", "lumiVibration_zone", "lumiStaticStateAction"),
     }
     lumi_converter_alias = lumi_converter_aliases.get(expose.name, ())
     lumi_binding = next(
@@ -436,6 +516,23 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
     )
     if lumi_binding is not None:
         return lumi_binding
+    feature_binding = {
+        "color_temperature": ("lightingColorCtrl", "colorTemperature"),
+        "color": ("lightingColorCtrl", None),
+    }.get(expose.name)
+    if feature_binding is not None:
+        feature_cluster, feature_attribute = feature_binding
+        binding = next(
+            (
+                item
+                for item in bindings
+                if _same_cluster(item.cluster, feature_cluster)
+                and _same_attribute(item.attribute, feature_attribute)
+            ),
+            None,
+        )
+        if binding is not None:
+            return binding
     semantic = {
         "temperature": "temperature",
         "humidity": "humidity",
@@ -521,16 +618,16 @@ def _same_attribute(left: str | int | None, right: str | int | None) -> bool:
     return left == right or (isinstance(left, str) and isinstance(right, str) and left.lower() == right.lower())
 
 
-def _apply_expression(value: Any, binding: Binding) -> Any:
-    return _evaluate_expression(value, binding.expression)
+def _apply_expression(value: Any, binding: Binding, endpoint: str | int | None = None) -> Any:
+    return _evaluate_expression(value, binding.expression, endpoint)
 
 
-def _evaluate_expression(value: Any, expression: Expression | None) -> Any:
+def _evaluate_expression(value: Any, expression: Expression | None, endpoint: str | int | None = None) -> Any:
     if expression is None:
         return value
     if expression.op == "floor":
         if expression.args and isinstance(expression.args[0], Expression):
-            value = _evaluate_expression(value, expression.args[0])
+            value = _evaluate_expression(value, expression.args[0], endpoint)
         if isinstance(value, (int, float)):
             return math.floor(value)
     if expression.op == "multiply" and expression.args:
@@ -553,6 +650,52 @@ def _evaluate_expression(value: Any, expression: Expression | None) -> Any:
         lookup = expression.args[0]
         if isinstance(lookup, dict):
             return lookup.get(str(value), value)
+    if expression.op == "action_lookup" and expression.args:
+        lookup = expression.args[0]
+        endpoint_names = expression.args[1] if len(expression.args) > 1 else []
+        button_lookup = expression.args[2] if len(expression.args) > 2 else {}
+        endpoint_map = expression.args[3] if len(expression.args) > 3 else {}
+        action = lookup.get(str(value), value) if isinstance(lookup, dict) else value
+        suffix = None
+        if isinstance(button_lookup, dict):
+            suffix = next((name for name, endpoint_id in button_lookup.items() if endpoint_id == endpoint), None)
+        if suffix is None and isinstance(endpoint_names, list):
+            suffix = next(
+                (
+                    name
+                    for name in endpoint_names
+                    if (isinstance(endpoint_map, dict) and endpoint_map.get(name) == endpoint)
+                    or endpoint == name
+                ),
+                None,
+            )
+        if suffix is not None:
+            return f"{action}_{suffix}"
+        return action
+    if expression.op == "battery_percentage" and expression.args and isinstance(value, (int, float)):
+        option = expression.args[0]
+        if option == "3V_2100":
+            if value < 2100:
+                percentage = 0
+            elif value < 2440:
+                percentage = 6 - ((2440 - value) * 6) / 340
+            elif value < 2740:
+                percentage = 18 - ((2740 - value) * 12) / 300
+            elif value < 2900:
+                percentage = 42 - ((2900 - value) * 24) / 160
+            elif value < 3000:
+                percentage = 100 - ((3000 - value) * 58) / 100
+            else:
+                percentage = 100
+            return round(percentage)
+        if option == "3V_1500_2800":
+            return round(min(max(235 - 370000 / (value + 1), 0), 100))
+        if isinstance(option, dict):
+            offset = option.get("vOffset", 0)
+            minimum = option.get("min")
+            maximum = option.get("max")
+            if isinstance(offset, (int, float)) and isinstance(minimum, (int, float)) and isinstance(maximum, (int, float)):
+                return min(max((value + offset - minimum) * 100 / (maximum - minimum), 0), 100)
     return value
 
 

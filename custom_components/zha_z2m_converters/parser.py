@@ -1107,9 +1107,30 @@ def _lumi_cluster_spec() -> CustomClusterSpec:
             {"name": "powerOutageMode", "id": 0x0517, "type": "uint8_t", "write": True},
             {"name": "dimmingRangeMin", "id": 0x0515, "type": "uint8_t", "write": True},
             {"name": "dimmingRangeMax", "id": 0x0516, "type": "uint8_t", "write": True},
+            {"name": "transitionCurveCurvature", "id": 0x0528, "type": "Single", "write": True},
+            {"name": "transitionInitialBrightness", "id": 0x052C, "type": "uint8_t", "write": True},
             {"name": "curtainReverse", "id": 0x0400, "type": "Bool", "write": True},
             {"name": "curtainHandOpen", "id": 0x0401, "type": "Bool", "write": True},
             {"name": "curtainCalibrated", "id": 0x0402, "type": "Bool", "write": True},
+            {"name": "curtainTraverseTime", "id": 0x0403, "type": "uint8_t", "write": True},
+            {"name": "curtainIdentifyBeep", "id": 0x0404, "type": "uint8_t", "write": True},
+            {"name": "curtainPosition", "id": 0x041F, "type": "uint8_t", "write": True},
+            {"name": "curtainStatus", "id": 0x0421, "type": "uint8_t", "write": True},
+            {"name": "curtainLastManualOperation", "id": 0x0425, "type": "uint8_t", "write": True},
+            {"name": "curtainCalibrationStatus", "id": 0x0426, "type": "uint8_t", "write": True},
+            {"name": "curtainManualStop", "id": 0x043A, "type": "Bool", "write": True},
+            {"name": "curtainSpeed", "id": 0x043B, "type": "uint8_t", "write": True},
+            {"name": "curtainAdaptivePullingSpeed", "id": 0x0442, "type": "Bool", "write": True},
+            {"name": "actionSlideTime", "id": 0x0231, "type": "uint16_t", "write": True},
+            {"name": "actionSlideSpeed", "id": 0x0232, "type": "uint16_t", "write": True},
+            {"name": "actionSlideRelativeDisplacement", "id": 0x0233, "type": "uint16_t", "write": True},
+            {"name": "actionSlider", "id": 0x028C, "type": "uint8_t", "write": True},
+            {"name": "actionSlideTimeDelta", "id": 0x0301, "type": "uint16_t", "write": True},
+            {"name": "rgbEffect", "id": 0x051F, "type": "uint32_t", "write": True},
+            {"name": "rgbEffectSpeed", "id": 0x0520, "type": "uint8_t", "write": True},
+            {"name": "sensitivityAdjustment", "id": 0x010E, "type": "uint8_t", "write": True},
+            {"name": "reportInterval", "id": 0x0110, "type": "uint8_t", "write": True},
+            {"name": "staticStateAction", "id": 0x01F3, "type": "uint8_t", "write": False},
         ),
     )
 
@@ -1492,8 +1513,26 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         # from generic custom-cluster parsing until a declarative schema path
         # is available for arbitrary vendor clusters.
         return [], [], name, True
+    if name == "lumiSetEventMode":
+        return [], [], name, True
     if name == "lumiOnOff":
         return _lumi_on_off_extend(args)
+    if name == "lumiLight":
+        return _lumi_light_extend(args)
+    if name == "lumiBattery":
+        return _lumi_battery_extend(args)
+    if name == "lumiCommandMode":
+        return _lumi_command_mode_extend(args)
+    if name == "lumiSlider":
+        return _lumi_slider_extend(args)
+    if name == "lumiRGBEffect":
+        return _lumi_rgb_effect_extend(args)
+    if name == "lumiVibration":
+        return _lumi_vibration_extend(args)
+    if name == "lumiStaticStateAction":
+        return _lumi_static_state_action_extend(args)
+    if name == "lumiAction":
+        return _lumi_action_extend(args)
     lumi_simple = _lumi_simple_extend(name, args)
     if lumi_simple is not None:
         exposes, bindings = lumi_simple
@@ -2209,7 +2248,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
 
 def _lumi_simple_extend(name: str, args: dict[str, Any]) -> tuple[list[Expose], list[Binding]] | None:
     """Expand fixed Lumi manufacturer attributes without evaluating JavaScript."""
-    definitions: dict[str, tuple[str, int, str, dict[str, Any]]] = {
+    definitions: dict[str, tuple[str, str | int, str, dict[str, Any]]] = {
         "lumiButtonLock": (
             "button_lock",
             0x0200,
@@ -2276,12 +2315,51 @@ def _lumi_simple_extend(name: str, args: dict[str, Any]) -> tuple[list[Expose], 
             "binary",
             {"ON": 1, "OFF": 0},
         ),
+        "lumiMultiClick": (
+            "multi_click",
+            0x0286,
+            "binary",
+            {True: 2, False: 1},
+        ),
         "lumiPowerOnBehavior": (
             "power_on_behavior",
             0x0517,
             "enum",
             {"on": 0, "previous": 1, "off": 2, "inverted": 3},
         ),
+        "lumiMotorSpeed": (
+            "motor_speed",
+            0x0408,
+            "enum",
+            {"low": 0, "medium": 1, "high": 2},
+        ),
+        "lumiCurtainManualOpenClose": ("manual_open_close", "curtainHandOpen", "binary", {True: 1, False: 0}),
+        "lumiCurtainAdaptivePullingSpeed": ("adaptive_pulling_speed", 0x0442, "binary", {True: 1, False: 0}),
+        "lumiCurtainManualStop": ("manual_stop", 0x043A, "binary", {True: 1, False: 0}),
+        "lumiCurtainStatus": ("status", 0x0421, "enum", {"closing": 0, "opening": 1, "stopped": 2, "blocked": 3}),
+        "lumiCurtainLastManualOperation": ("last_manual_operation", 0x0425, "enum", {"open": 1, "close": 2, "stop": 3}),
+        "lumiCurtainCalibrationStatus": (
+            "calibration_status",
+            0x0426,
+            "enum",
+            {"not_calibrated": 0, "half_calibrated": 1, "fully_calibrated": 2},
+        ),
+        "lumiCurtainCalibrated": ("calibrated", "curtainCalibrated", "binary", {True: 1, False: 0}),
+        "lumiCurtainIdentifyBeep": ("identify_beep", 0x0404, "enum", {"short": 0, "1_sec": 1, "2_sec": 2}),
+        "lumiAirQuality": (
+            "air_quality",
+            "airQuality",
+            "enum",
+            {"excellent": 1, "good": 2, "moderate": 3, "poor": 4, "unhealthy": 5, "unknown": 0},
+        ),
+        "lumiDisplayUnit": (
+            "display_unit",
+            "displayUnit",
+            "enum",
+            {"mgm3_celsius": 0, "ppb_celsius": 1, "mgm3_fahrenheit": 16, "ppb_fahrenheit": 17},
+        ),
+        "lumiSensitivityAdjustment": ("sensitivity_adjustment", 0x010E, "enum", {"high": 1, "medium": 2, "low": 3}),
+        "lumiReportInterval": ("report_interval", 0x0110, "enum", {"1s": 1, "5s": 2, "10s": 3}),
     }
     definition = definitions.get(name)
     numeric_definitions: dict[str, tuple[str, str, int, str, float | None, float | None, float | None, float | None]] = {
@@ -2289,6 +2367,13 @@ def _lumi_simple_extend(name: str, args: dict[str, Any]) -> tuple[list[Expose], 
         "lumiDimmingRangeMax": ("dimming_range_maximum", "manuSpecificLumi", 0x0516, "%", 2, 100, 1, None),
         "lumiOffOnDuration": ("off_on_duration", "genLevelCtrl", 0x0012, "s", 0, 10, 0.5, 10),
         "lumiOnOffDuration": ("on_off_duration", "genLevelCtrl", 0x0013, "s", 0, 10, 0.5, 10),
+        "lumiTransitionCurveCurvature": ("transition_curve_curvature", "manuSpecificLumi", 0x0528, "", 0.2, 6, 0.01, None),
+        "lumiTransitionInitialBrightness": ("transition_initial_brightness", "manuSpecificLumi", 0x052C, "%", 0, 50, 1, None),
+        "lumiCurtainSpeed": ("curtain_speed", "manuSpecificLumi", 0x043B, "%", 1, 100, 1, None),
+        "lumiCurtainPosition": ("curtain_position", "manuSpecificLumi", 0x041F, "%", 1, 100, 1, None),
+        "lumiCurtainTraverseTime": ("traverse_time", "manuSpecificLumi", 0x0403, "sec", None, None, None, None),
+        "lumiRGBEffectSpeed": ("effect_speed", "manuSpecificLumi", 0x0520, "%", 1, 100, 1, None),
+        "lumiVoc": ("voc", "genAnalogInput", "presentValue", "ppb", None, None, None, None),
     }
     numeric_definition = numeric_definitions.get(name)
     if numeric_definition is not None:
@@ -2298,9 +2383,11 @@ def _lumi_simple_extend(name: str, args: dict[str, Any]) -> tuple[list[Expose], 
         attribute = _static_value(args.get("attribute")) if "attribute" in args else default_attribute
         if not isinstance(attribute, (int, str)):
             return None
-        access_name = _static_text(args.get("access")) or "ALL"
+        default_access = "STATE_GET" if name in {"lumiVoc", "lumiCurtainPosition", "lumiCurtainTraverseTime"} else "ALL"
+        access_name = _static_text(args.get("access")) or default_access
         access = ("state", "set") if access_name == "ALL" else tuple(access_name.lower().split("_"))
         expression = Expression("divide", (scale,)) if scale else None
+        default_category = "diagnostic" if name in {"lumiVoc", "lumiCurtainPosition", "lumiCurtainTraverseTime"} else "config"
         return [
             Expose(
                 "numeric",
@@ -2312,29 +2399,89 @@ def _lumi_simple_extend(name: str, args: dict[str, Any]) -> tuple[list[Expose], 
                 value_max=args.get("valueMax", default_max),
                 value_step=args.get("valueStep", default_step),
                 description=_static_text(args.get("description")),
-                category=_static_text(args.get("entityCategory")) or "config",
+                category=_static_text(args.get("entityCategory")) or default_category,
             )
         ], [
             Binding(name, cluster, attribute, direction="report", expression=expression),
             Binding(name, cluster, attribute, direction="command", expression=expression),
         ]
+    if name == "lumiCurtainReverse":
+        allowed_args = {"access", "attribute", "description", "endpointName", "entityCategory", "valueOn", "valueOff"}
+        if set(args) - allowed_args:
+            return None
+        value_on = args.get("valueOn", [True, 1])
+        value_off = args.get("valueOff", [False, 0])
+        if (
+            not isinstance(value_on, list)
+            or len(value_on) != 2
+            or not isinstance(value_off, list)
+            or len(value_off) != 2
+            or not isinstance(value_on[1], (str, int, float, bool))
+            or not isinstance(value_off[1], (str, int, float, bool))
+        ):
+            return None
+        access_name = _static_text(args.get("access")) or "ALL"
+        access = ("state", "set") if access_name == "ALL" else tuple(access_name.lower().split("_"))
+        expression = Expression("lookup", ({str(value_on[1]): True, str(value_off[1]): False},))
+        expose = Expose(
+            "binary",
+            "reverse_direction",
+            "reverse_direction",
+            access,
+            endpoint=_static_text(args.get("endpointName")),
+            description=_static_text(args.get("description")),
+            category=_static_text(args.get("entityCategory")) or "config",
+        )
+        return [expose], [
+            Binding(name, "closuresWindowCovering", _static_value(args.get("attribute")) if "attribute" in args else "windowCoveringMode", direction="report", expression=expression),
+            Binding(name, "closuresWindowCovering", _static_value(args.get("attribute")) if "attribute" in args else "windowCoveringMode", direction="command", expression=expression),
+        ]
     if definition is not None or name == "lumiOverloadProtection":
-        allowed_args = {"access", "attribute", "description", "endpointName", "entityCategory", "lookup", "valueMax", "valueMin", "valueStep"}
+        allowed_args = {
+            "access",
+            "attribute",
+            "description",
+            "endpointName",
+            "entityCategory",
+            "lookup",
+            "valueMax",
+            "valueMin",
+            "valueOn",
+            "valueOff",
+            "valueStep",
+        }
         if any(key not in allowed_args for key in args):
             return None
     if definition is not None:
         expose_name, default_attribute, expose_type, default_lookup = definition
         attribute = _static_value(args.get("attribute")) if "attribute" in args else default_attribute
         lookup = args.get("lookup", default_lookup)
-        if not isinstance(attribute, int) or not isinstance(lookup, dict):
+        if not isinstance(attribute, (int, str)) or not isinstance(lookup, dict):
+            return None
+        if expose_type == "binary" and ("valueOn" in args or "valueOff" in args):
+            value_on = args.get("valueOn", [True, lookup.get(True)])
+            value_off = args.get("valueOff", [False, lookup.get(False)])
+            if (
+                not isinstance(value_on, list)
+                or len(value_on) != 2
+                or not isinstance(value_on[1], (str, int, float, bool))
+                or not isinstance(value_off, list)
+                or len(value_off) != 2
+                or not isinstance(value_off[1], (str, int, float, bool))
+            ):
+                return None
+            lookup = {True: value_on[1], False: value_off[1]}
+        elif expose_type != "binary" and ("valueOn" in args or "valueOff" in args):
             return None
         if not all(isinstance(key, (str, int, bool)) and isinstance(value, (str, int, float, bool)) for key, value in lookup.items()):
             return None
         expression = Expression("lookup", ({str(value): key for key, value in lookup.items()},))
         values = () if expose_type == "binary" else tuple(str(key) for key in lookup)
-        access_name = _static_text(args.get("access")) or "ALL"
+        default_access = "STATE_GET" if name in {"lumiVoc", "lumiAirQuality", "lumiCurtainStatus", "lumiCurtainLastManualOperation", "lumiCurtainCalibrationStatus", "lumiCurtainCalibrated", "lumiCurtainPosition", "lumiCurtainTraverseTime"} else "ALL"
+        access_name = _static_text(args.get("access")) or default_access
         access = ("state", "set") if access_name == "ALL" else tuple(access_name.lower().split("_"))
-        category = _static_text(args.get("entityCategory")) or "config"
+        default_category = "diagnostic" if name in {"lumiVoc", "lumiAirQuality", "lumiCurtainStatus", "lumiCurtainLastManualOperation", "lumiCurtainCalibrationStatus", "lumiCurtainCalibrated", "lumiCurtainPosition", "lumiCurtainTraverseTime"} else "config"
+        category = _static_text(args.get("entityCategory")) or default_category
         expose = Expose(
             expose_type,
             expose_name,
@@ -2410,6 +2557,344 @@ def _lumi_simple_extend(name: str, args: dict[str, Any]) -> tuple[list[Expose], 
     return None
 
 
+def _lumi_action_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    """Expand the static action lookup used by Lumi button devices."""
+    allowed_args = {"actionLookup", "buttonLookup", "description", "endpointNames", "extraActions"}
+    if set(args) - allowed_args:
+        return [], [], "lumiAction", False
+
+    action_lookup = args.get("actionLookup", {"single": 1})
+    if not isinstance(action_lookup, dict) or not action_lookup:
+        return [], [], "lumiAction", False
+    if not all(
+        isinstance(action, str)
+        and isinstance(raw_value, (str, int, float, bool))
+        for action, raw_value in action_lookup.items()
+    ):
+        return [], [], "lumiAction", False
+
+    endpoint_names = args.get("endpointNames")
+    if endpoint_names is not None and (
+        not isinstance(endpoint_names, list)
+        or not endpoint_names
+        or not all(isinstance(endpoint, str) for endpoint in endpoint_names)
+    ):
+        return [], [], "lumiAction", False
+    button_lookup = args.get("buttonLookup")
+    if button_lookup is not None and (
+        not isinstance(button_lookup, dict)
+        or not all(
+            isinstance(button, str) and isinstance(endpoint, (str, int, float, bool))
+            for button, endpoint in button_lookup.items()
+        )
+    ):
+        return [], [], "lumiAction", False
+    extra_actions = args.get("extraActions", [])
+    if not isinstance(extra_actions, list) or not all(isinstance(action, str) for action in extra_actions):
+        return [], [], "lumiAction", False
+
+    actions = [
+        f"{action}_{endpoint}"
+        for action in action_lookup
+        for endpoint in endpoint_names or []
+    ] or list(action_lookup)
+    actions.extend(extra_actions)
+    raw_to_action = {str(raw_value): action for action, raw_value in action_lookup.items()}
+    expression = Expression("action_lookup", (raw_to_action, endpoint_names or [], button_lookup or {}, {}))
+    expose = Expose(
+        "enum",
+        "action",
+        "action",
+        ("state",),
+        values=tuple(actions),
+        description=_static_text(args.get("description")) or "Triggered action (e.g. a button click)",
+        category="diagnostic",
+    )
+    binding = Binding("lumiAction", "genMultistateInput", "presentValue", direction="event", expression=expression)
+    return [expose], [binding], "lumiAction", True
+
+
+def _lumi_light_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    """Expand the Lumi light wrapper using only static light features."""
+    allowed_args = {
+        "color",
+        "colorTemp",
+        "colorTempRange",
+        "configureReporting",
+        "deviceTemperature",
+        "effect",
+        "endpointNames",
+        "levelConfig",
+        "levelReportingConfig",
+        "moveToLevelWithOnOffDisable",
+        "ota",
+        "powerOnBehavior",
+        "powerOutageCount",
+        "powerOutageMemory",
+        "turnsOffAtBrightness1",
+    }
+    if set(args) - allowed_args:
+        return [], [], "lumiLight", False
+    if args.get("colorTemp") not in (None, True, False):
+        return [], [], "lumiLight", False
+    color_temp_range = args.get("colorTempRange")
+    if color_temp_range is not None and (
+        not isinstance(color_temp_range, list)
+        or len(color_temp_range) != 2
+        or not all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in color_temp_range)
+    ):
+        return [], [], "lumiLight", False
+    endpoint_names = args.get("endpointNames")
+    if endpoint_names is not None and (
+        not isinstance(endpoint_names, list)
+        or not endpoint_names
+        or not all(isinstance(endpoint, str) for endpoint in endpoint_names)
+    ):
+        return [], [], "lumiLight", False
+    power_outage_memory = args.get("powerOutageMemory")
+    if power_outage_memory not in (None, "switch", "light", "enum"):
+        return [], [], "lumiLight", False
+    if args.get("ota") not in (None, False):
+        return [], [], "lumiLight", False
+
+    light_args = {
+        key: value
+        for key, value in args.items()
+        if key
+        not in {
+            "colorTemp",
+            "colorTempRange",
+            "deviceTemperature",
+            "powerOutageCount",
+            "powerOutageMemory",
+            "endpointNames",
+            "ota",
+        }
+    }
+    light_args.update({"effect": False, "powerOnBehavior": False})
+    if args.get("colorTemp") is True:
+        light_args["colorTemp"] = {
+            "startup": False,
+            "range": color_temp_range or [153, 370],
+        }
+    generated = _modern_extend({"__call__": "light", "args": [light_args]})
+    exposes, bindings, _, supported = generated
+    if not supported:
+        return [], [], "lumiLight", False
+    if endpoint_names:
+        exposes = [replace(expose, endpoint=endpoint) for expose in exposes for endpoint in endpoint_names]
+        bindings = [replace(binding, endpoint=endpoint) for binding in bindings for endpoint in endpoint_names]
+
+    if args.get("powerOutageCount", True) is True:
+        exposes.append(Expose("numeric", "power_outage_count", "power_outage_count", ("state",), category="diagnostic"))
+        bindings.append(
+            Binding(
+                "lumi_power_outage_count",
+                "manuSpecificLumi",
+                5,
+                direction="report",
+                expression=Expression("subtract", (1,)),
+            )
+        )
+    if args.get("deviceTemperature", True) is True:
+        exposes.append(Expose("numeric", "device_temperature", "device_temperature", ("state",), unit="°C", category="diagnostic"))
+        bindings.append(Binding("device_temperature", "manuSpecificLumi", 3, direction="report"))
+    if power_outage_memory == "switch":
+        generated_exposes, generated_bindings = _lumi_simple_extend("lumiPowerOutageMemory", {}) or ([], [])
+        exposes.extend(generated_exposes)
+        bindings.extend(generated_bindings)
+    elif power_outage_memory == "light":
+        exposes.append(Expose("binary", "power_outage_memory", "power_outage_memory", ("state", "set")))
+        bindings.append(Binding("lumi_light_power_outage_memory", "genBasic", 0xFFF0, direction="command"))
+    elif power_outage_memory == "enum":
+        generated_exposes, generated_bindings = _lumi_simple_extend(
+            "lumiPowerOnBehavior",
+            {"lookup": {"on": 0, "previous": 1, "off": 2}},
+        ) or ([], [])
+        exposes.extend(generated_exposes)
+        bindings.extend(generated_bindings)
+    return exposes, bindings, "lumiLight", True
+
+
+def _lumi_battery_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    """Expand Lumi battery attributes and static voltage conversion options."""
+    allowed_args = {"cluster", "percentageAttribute", "voltageAttribute", "voltageToPercentage"}
+    if set(args) - allowed_args:
+        return [], [], "lumiBattery", False
+    cluster = _static_text(args.get("cluster")) or "manuSpecificLumi"
+    if cluster not in {"genBasic", "manuSpecificLumi"}:
+        return [], [], "lumiBattery", False
+    percentage_attribute = args.get("percentageAttribute", 1)
+    voltage_attribute = args.get("voltageAttribute", 1)
+    if any(not isinstance(attribute, int) or isinstance(attribute, bool) for attribute in (percentage_attribute, voltage_attribute)):
+        return [], [], "lumiBattery", False
+    voltage_to_percentage = args.get("voltageToPercentage")
+    if voltage_to_percentage is not None and not (
+        (isinstance(voltage_to_percentage, str) and voltage_to_percentage in {"3V_2100", "3V_1500_2800"})
+        or (
+            isinstance(voltage_to_percentage, dict)
+            and isinstance(voltage_to_percentage.get("min"), (int, float))
+            and isinstance(voltage_to_percentage.get("max"), (int, float))
+            and not isinstance(voltage_to_percentage.get("min"), bool)
+            and not isinstance(voltage_to_percentage.get("max"), bool)
+            and voltage_to_percentage["max"] != voltage_to_percentage["min"]
+            and (
+                "vOffset" not in voltage_to_percentage
+                or isinstance(voltage_to_percentage["vOffset"], (int, float))
+                and not isinstance(voltage_to_percentage["vOffset"], bool)
+            )
+        )
+    ):
+        return [], [], "lumiBattery", False
+    battery_expression = (
+        Expression("battery_percentage", (voltage_to_percentage,))
+        if voltage_to_percentage is not None
+        else None
+    )
+    exposes = [
+        Expose("numeric", "battery", "battery", ("state",), unit="%", category="diagnostic"),
+        Expose("numeric", "voltage", "voltage", ("state",), unit="mV", category="diagnostic"),
+    ]
+    bindings = [
+        Binding("lumiBattery_battery", cluster, percentage_attribute, direction="report", expression=battery_expression),
+        Binding("lumiBattery_voltage", cluster, voltage_attribute, direction="report"),
+    ]
+    if voltage_to_percentage is not None:
+        bindings[0] = replace(bindings[0], attribute=voltage_attribute)
+    return exposes, bindings, "lumiBattery", True
+
+
+def _lumi_command_mode_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    """Expand Lumi command/event mode and its optional static initialization."""
+    if set(args) - {"setEventMode"} or args.get("setEventMode", True) not in {True, False}:
+        return [], [], "lumiCommandMode", False
+    expression = Expression("lookup", ({"0": "command", "1": "event"},))
+    expose = Expose(
+        "enum",
+        "operation_mode",
+        "operation_mode",
+        ("state", "set"),
+        values=("event", "command"),
+        description="Command mode is useful for binding; event mode is useful for processing.",
+        category="config",
+    )
+    bindings = [
+        Binding("lumiCommandMode", "manuSpecificLumi", "mode", direction="report", expression=expression),
+        Binding("lumiCommandMode", "manuSpecificLumi", "mode", direction="command", expression=expression),
+    ]
+    return [expose], bindings, "lumiCommandMode", True
+
+
+def _lumi_slider_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    """Expand Lumi slider telemetry and slider action lookup."""
+    if args:
+        return [], [], "lumiSlider", False
+    fields = [
+        ("action_slide_time", 0x0231, "ms"),
+        ("action_slide_speed", 0x0232, "mm/s"),
+        ("action_slide_relative_displacement", 0x0233, None),
+        ("action_slide_time_delta", 0x0301, "ms"),
+    ]
+    exposes = [
+        Expose("numeric", name, name, ("state",), unit=unit, category="diagnostic")
+        for name, _, unit in fields
+    ]
+    bindings = [
+        Binding(f"lumiSlider_{name}", "manuSpecificLumi", attribute, direction="report")
+        for name, attribute, _ in fields
+    ]
+    bindings.append(
+        Binding(
+            "lumiSlider_action",
+            "manuSpecificLumi",
+            0x028C,
+            direction="event",
+            expression=Expression(
+                "lookup",
+                ({"1": "slider_single", "2": "slider_double", "3": "slider_hold", "4": "slider_up", "5": "slider_down"},),
+            ),
+        )
+    )
+    return exposes, bindings, "lumiSlider", True
+
+
+def _lumi_rgb_effect_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    """Expand a positional static Lumi RGB effect lookup."""
+    if not args or not all(
+        isinstance(name, str) and isinstance(value, (str, int, float, bool))
+        for name, value in args.items()
+    ):
+        return [], [], "lumiRGBEffect", False
+    lookup = {name: value for name, value in args.items()}
+    expression = Expression("lookup", ({str(value): key for key, value in lookup.items()},))
+    expose = Expose(
+        "enum",
+        "effect",
+        "effect",
+        ("state", "set"),
+        values=tuple(lookup),
+        description="RGB dynamic effect type",
+        category="config",
+    )
+    return [expose], [
+        Binding("lumiRGBEffect", "manuSpecificLumi", 0x051F, direction="report", expression=expression),
+        Binding("lumiRGBEffect", "manuSpecificLumi", 0x051F, direction="command", expression=expression),
+    ], "lumiRGBEffect", True
+
+
+def _lumi_vibration_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    """Expand the static event sources used by Lumi vibration sensors."""
+    if args:
+        return [], [], "lumiVibration", False
+    expose = Expose(
+        "enum",
+        "action",
+        "action",
+        ("state",),
+        values=("shake", "triple_strike", "movement"),
+        category="diagnostic",
+    )
+    bindings = [
+        Binding(
+            "lumiVibration_zone",
+            "ssIasZone",
+            "zoneStatus",
+            direction="event",
+            expression=Expression("lookup", ({"1": "shake", "2": "triple_strike"},)),
+        ),
+        Binding(
+            "lumiVibration_multistate",
+            "genMultistateInput",
+            "presentValue",
+            direction="event",
+            expression=Expression("lookup", ({"1": "triple_strike"},)),
+        ),
+        Binding(
+            "lumiVibration_movement",
+            "manuSpecificLumi",
+            "movement",
+            direction="event",
+            expression=Expression("lookup", ({"1": "movement"},)),
+        ),
+    ]
+    return [expose], bindings, "lumiVibration", True
+
+
+def _lumi_static_state_action_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
+    """Expand the static Lumi action emitted by attribute 0x01F3."""
+    if args:
+        return [], [], "lumiStaticStateAction", False
+    return [], [
+        Binding(
+            "lumiStaticStateAction",
+            "manuSpecificLumi",
+            0x01F3,
+            direction="event",
+            expression=Expression("lookup", ({"1": "static"},)),
+        )
+    ], "lumiStaticStateAction", True
+
+
 def _lumi_on_off_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Binding], str, bool]:
     """Expand the static subset of lumiOnOff used by current definitions."""
     supported_options = {
@@ -2435,7 +2920,7 @@ def _lumi_on_off_extend(args: dict[str, Any]) -> tuple[list[Expose], list[Bindin
 
     if args.get("deviceTemperature", True) is True:
         exposes.append(Expose("numeric", "device_temperature", "device_temperature", ("state",), unit="°C", category="diagnostic"))
-        bindings.append(Binding("device_temperature", "genDeviceTempCfg", "currentTemperature", direction="report"))
+        bindings.append(Binding("device_temperature", "manuSpecificLumi", 3, direction="report"))
     if args.get("powerOutageCount", True) is True:
         exposes.append(Expose("numeric", "power_outage_count", "power_outage_count", ("state",), category="diagnostic"))
         bindings.append(
@@ -3078,6 +3563,28 @@ def _device(
                     target="device",
                 )
             )
+        if name == "lumiSetEventMode":
+            configure_actions.append(
+                ConfigureAction(
+                    "write",
+                    1,
+                    "manuSpecificLumi",
+                    payload={"mode": 1},
+                    target="device",
+                    manufacturer_code=0x115F,
+                )
+            )
+        if name == "lumiCommandMode" and _call_args(item).get("setEventMode", True) is True:
+            configure_actions.append(
+                ConfigureAction(
+                    "write",
+                    1,
+                    "manuSpecificLumi",
+                    payload={"mode": 1},
+                    target="device",
+                    manufacturer_code=0x115F,
+                )
+            )
         custom_cluster_spec = _custom_cluster_spec(item)
         if custom_cluster_spec is not None:
             custom_cluster_specs.append(custom_cluster_spec)
@@ -3110,6 +3617,20 @@ def _device(
     if endpoint_map:
         exposes = [replace(expose, endpoint=_resolve_endpoint(expose.endpoint, endpoint_map)) for expose in exposes]
         from_zigbee = [replace(binding, endpoint=_resolve_endpoint(binding.endpoint, endpoint_map)) for binding in from_zigbee]
+    from_zigbee = [
+        replace(
+            binding,
+            expression=replace(
+                binding.expression,
+                args=(*binding.expression.args[:3], dict(endpoint_map)),
+            )
+            if binding.expression is not None
+            and binding.expression.op == "action_lookup"
+            and len(binding.expression.args) >= 4
+            else binding.expression,
+        )
+        for binding in from_zigbee
+    ]
     converter_names = {
         binding.converter.rsplit(".", 1)[-1]
         for binding in [*from_zigbee, *to_zigbee]

@@ -8,10 +8,10 @@ the safe declarative translation to ZHA.
 
 | Status | Definitions | Share |
 |---|---:|---:|
-| Fully supported | 2,553 | 57.0% |
-| Usable partial | 1,634 | 36.5% |
+| Fully supported | 2,573 | 57.5% |
+| Usable partial | 1,627 | 36.3% |
 | Metadata only | 11 | 0.2% |
-| Unusable partial | 276 | 6.2% |
+| Unusable partial | 263 | 5.9% |
 | Rejected | 4 | 0.1% |
 | **Total** | **4,478** | **100%** |
 
@@ -20,10 +20,10 @@ the safe declarative translation to ZHA.
 | Problem | Definitions |
 |---|---:|
 | unsupported converter binding | 836 |
-| unsupported extend macro | 628 |
+| unsupported extend macro | 607 |
 | dynamic expose or other expression | 306 |
-| no usable data path | 276 |
-| unsupported definition field | 140 |
+| no usable data path | 263 |
+| unsupported definition field | 141 |
 
 ### Unsupported extend macros
 
@@ -33,13 +33,11 @@ the safe declarative translation to ZHA.
 | `tuyaBase` | 133 |
 | `lumiPreventReset` | 61 |
 | `commandsScenes` | 30 |
-| `lumiAction` | 27 |
 | `lockExtend` | 26 |
 | `commandsWindowCovering` | 24 |
 | `addLegrandDevicesCluster` | 24 |
 | `poll` | 23 |
 | `acConnected` | 23 |
-| `lumiLight` | 23 |
 | `onokomHvacThermostatCluster` | 22 |
 | `onokomHvacFanCtrlCluster` | 22 |
 | `currentTemperature` | 22 |
@@ -49,7 +47,9 @@ the safe declarative translation to ZHA.
 | `zbFanSpeed` | 22 |
 | `fanSpeed` | 22 |
 | `smartFanSpeed` | 22 |
-| *674 more items* | — |
+| `statusLed` | 22 |
+| `mullerLichtLight` | 20 |
+| *643 more items* | — |
 
 ### Unsupported converter bindings
 
@@ -130,8 +130,8 @@ Categories can overlap when one definition has several different gaps.
 | `endpoint.bind` | 2 |
 | `endpoint1.configureReporting` | 2 |
 | `mainController.read` | 1 |
-| `ep1.bind` | 1 |
 | `ep2.bind` | 1 |
+| `ep1.bind` | 1 |
 | `endpoint2.write` | 1 |
 
 ### Configure: unsupported endpoint/device operation
@@ -155,11 +155,11 @@ Categories can overlap when one definition has several different gaps.
 | `utils.attachOutputCluster` | 5 |
 | `m.setupAttributes` | 4 |
 | `utils.sleep` | 3 |
-| `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
-| `heiman.configureReporting.pm10measuredValue` | 2 |
 | `heiman.configureReporting.aqiMeasuredValue` | 2 |
-| `heiman.configureReporting.batteryState` | 2 |
+| `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
 | `heiman.configureReporting.pm25MeasuredValue` | 2 |
+| `heiman.configureReporting.batteryState` | 2 |
+| `heiman.configureReporting.pm10measuredValue` | 2 |
 | `syncTime` | 2 |
 | `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |

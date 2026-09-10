@@ -360,6 +360,10 @@ class ParserTests(unittest.TestCase):
                 lumi.lumiModernExtend.lumiSwitchMode(),
                 lumi.lumiModernExtend.lumiDimmingRangeMin(),
                 lumi.lumiModernExtend.lumiOffOnDuration(),
+                lumi.lumiModernExtend.lumiMultiClick({endpointName: "left"}),
+                lumi.lumiModernExtend.lumiMotorSpeed(),
+                lumi.lumiModernExtend.lumiTransitionCurveCurvature(),
+                lumi.lumiModernExtend.lumiTransitionInitialBrightness(),
                 lumi.lumiModernExtend.lumiOverloadProtection({valueMax: 3250, access: "STATE_SET"}),
             ],
         }];
@@ -374,6 +378,10 @@ class ParserTests(unittest.TestCase):
                 ("mode_switch", 0x0004, ("state", "set")),
                 ("dimming_range_minimum", 0x0515, ("state", "set")),
                 ("off_on_duration", 0x0012, ("state", "set")),
+                ("multi_click", 0x0286, ("state", "set")),
+                ("motor_speed", 0x0408, ("state", "set")),
+                ("transition_curve_curvature", 0x0528, ("state", "set")),
+                ("transition_initial_brightness", 0x052C, ("state", "set")),
                 ("overload_protection", 0x020B, ("state", "set")),
             ],
         )
@@ -383,6 +391,10 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(make_write(plan, "mode_switch", "anti_flicker_mode").value, 4)
         self.assertEqual(make_write(plan, "dimming_range_minimum", 10).value, 10)
         self.assertEqual(make_write(plan, "off_on_duration", 2.5).value, 25)
+        self.assertEqual(make_write(plan, "multi_click", True).value, 2)
+        self.assertEqual(make_write(plan, "motor_speed", "high").value, 2)
+        self.assertEqual(make_write(plan, "transition_curve_curvature", 1.5).value, 1.5)
+        self.assertEqual(make_write(plan, "transition_initial_brightness", 25).value, 25)
         self.assertEqual(make_write(plan, "overload_protection", 3250).value, 3250)
 
     def test_lumi_on_off_macro_expands_static_features(self) -> None:
@@ -399,7 +411,7 @@ class ParserTests(unittest.TestCase):
             [(item.property, item.cluster, item.attribute) for item in plan.entities],
             [
                 ("state", "genOnOff", "onOff"),
-                ("device_temperature", "genDeviceTempCfg", "currentTemperature"),
+                ("device_temperature", "manuSpecificLumi", 3),
                 ("power_outage_count", "manuSpecificLumi", 5),
                 ("power_outage_memory", "manuSpecificLumi", 0x0201),
                 ("operation_mode", "manuSpecificLumi", 0x0200),
@@ -434,6 +446,278 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificLumi", 0x0096, 2300)), {"voltage": 230})
         self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificLumi", 0x0097, 1250)), {"current": 1.25})
+
+    def test_lumi_action_macro_uses_static_lookup_and_endpoint_suffixes(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi action",
+            vendor: "Aqara",
+            extend: [
+                m.deviceEndpoints({endpoints: {left: 1, right: 2}}),
+                lumi.lumiModernExtend.lumiAction({
+                    actionLookup: {single: 1, double: 2},
+                    endpointNames: ["left", "right"],
+                }),
+            ],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-action.ts").devices[0])
+        action = next(entity for entity in plan.entities if entity.property == "action")
+        self.assertEqual(action.cluster, "genMultistateInput")
+        self.assertEqual(action.attribute, "presentValue")
+        self.assertEqual(
+            action.access,
+            ("state",),
+        )
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("genMultistateInput", "presentValue", 1, endpoint=2)),
+            {"action": "single_right"},
+        )
+
+    def test_lumi_action_macro_supports_button_lookup_and_extra_actions(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi button action",
+            vendor: "Aqara",
+            extend: [lumi.lumiModernExtend.lumiAction({
+                actionLookup: {single: 1, double: 2},
+                buttonLookup: {left: 41, right: 42},
+                extraActions: ["slider_single"],
+            })],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-action-button.ts").devices[0])
+        self.assertEqual(
+            next(entity for entity in plan.entities if entity.property == "action").access,
+            ("state",),
+        )
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("genMultistateInput", "presentValue", 2, endpoint=41)),
+            {"action": "double_left"},
+        )
+
+    def test_lumi_light_macro_expands_static_light_and_lumi_features(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi light",
+            vendor: "Aqara",
+            extend: [lumi.lumiModernExtend.lumiLight({
+                colorTemp: true,
+                colorTempRange: [154, 370],
+                powerOutageMemory: "enum",
+                powerOutageCount: true,
+                deviceTemperature: true,
+            })],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-light.ts").devices[0])
+        self.assertFalse(plan.device.partial)
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute) for item in plan.entities],
+            [
+                ("state", "genOnOff", "onOff"),
+                ("color_temperature", "lightingColorCtrl", "colorTemperature"),
+                ("power_outage_count", "manuSpecificLumi", 5),
+                ("device_temperature", "manuSpecificLumi", 3),
+                ("power_on_behavior", "manuSpecificLumi", 0x0517),
+            ],
+        )
+        self.assertEqual(
+            next(entity for entity in plan.entities if entity.property == "color_temperature").access,
+            ("state", "set"),
+        )
+        self.assertEqual(make_write(plan, "power_on_behavior", "off").value, 2)
+
+    def test_lumi_light_macro_expands_each_named_endpoint(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi multi light",
+            vendor: "Aqara",
+            extend: [
+                m.deviceEndpoints({endpoints: {white: 1, color: 2}}),
+                lumi.lumiModernExtend.lumiLight({colorTemp: true, endpointNames: ["white", "color"]}),
+            ],
+        }];
+        """
+        device = parse_source(source, "lumi-light-multi.ts").devices[0]
+        plan = build_runtime_plan(device)
+        lights = [entity for entity in plan.entities if entity.property == "state"]
+        self.assertEqual([entity.endpoint for entity in lights], [1, 2])
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("genOnOff", "onOff", True, endpoint=2)),
+            {"state": True},
+        )
+
+    def test_lumi_set_event_mode_is_a_static_configure_write(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi event mode",
+            vendor: "Aqara",
+            extend: [lumi.lumiModernExtend.lumiSetEventMode()],
+        }];
+        """
+        device = parse_source(source, "lumi-event-mode.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [
+                ConfigureAction(
+                    "write",
+                    1,
+                    "manuSpecificLumi",
+                    payload={"mode": 1},
+                    target="device",
+                    manufacturer_code=0x115F,
+                )
+            ],
+        )
+
+    def test_lumi_battery_macro_uses_static_attributes_and_curve(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi battery",
+            vendor: "Aqara",
+            extend: [lumi.lumiModernExtend.lumiBattery({
+                voltageAttribute: 23,
+                percentageAttribute: 24,
+                voltageToPercentage: {min: 2850, max: 3000},
+            })],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-battery.ts").devices[0])
+        self.assertFalse(plan.device.partial)
+        self.assertEqual(
+            [(item.property, item.attribute) for item in plan.entities],
+            [("battery", 23), ("voltage", 23)],
+        )
+        self.assertEqual(apply_report(plan, RuntimeReport("manuSpecificLumi", 23, 2925)), {"battery": 50, "voltage": 2925})
+
+    def test_lumi_command_mode_is_static_with_optional_configure(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi command mode",
+            vendor: "Aqara",
+            extend: [lumi.lumiModernExtend.lumiCommandMode({setEventMode: true})],
+        }];
+        """
+        device = parse_source(source, "lumi-command-mode.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(len(device.configure_actions), 1)
+        plan = build_runtime_plan(device)
+        self.assertEqual(make_write(plan, "operation_mode", "event").value, 1)
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificLumi", "mode", 0)),
+            {"operation_mode": "command"},
+        )
+
+    def test_lumi_slider_uses_static_telemetry_and_action_bindings(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi slider",
+            vendor: "Aqara",
+            extend: [
+                lumi.lumiModernExtend.lumiAction({extraActions: ["slider_single", "slider_up"]}),
+                lumi.lumiModernExtend.lumiSlider(),
+            ],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-slider.ts").devices[0])
+        self.assertFalse(plan.device.partial)
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificLumi", 0x0231, 42)),
+            {"action_slide_time": 42},
+        )
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificLumi", 0x028C, 4)),
+            {"action": "slider_up"},
+        )
+
+    def test_lumi_rgb_effect_macros_use_static_lookups(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi RGB effect",
+            vendor: "Aqara",
+            extend: [
+                lumi.lumiModernExtend.lumiRGBEffect({off: 0, breathing: 1, candlelight: 2}),
+                lumi.lumiModernExtend.lumiRGBEffectSpeed(),
+            ],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-rgb-effect.ts").devices[0])
+        self.assertFalse(plan.device.partial)
+        self.assertEqual(make_write(plan, "effect", "candlelight").value, 2)
+        self.assertEqual(make_write(plan, "effect_speed", 75).value, 75)
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificLumi", 0x051F, 1)),
+            {"effect": "breathing"},
+        )
+
+    def test_lumi_air_quality_display_and_voc_are_static(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi air quality",
+            vendor: "Aqara",
+            extend: [
+                lumi.lumiModernExtend.lumiAirQuality(),
+                lumi.lumiModernExtend.lumiDisplayUnit(),
+                lumi.lumiModernExtend.lumiVoc(),
+            ],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-air-quality.ts").devices[0])
+        self.assertFalse(plan.device.partial)
+        self.assertEqual(
+            [(item.property, item.cluster, item.attribute, item.access) for item in plan.entities],
+            [
+                ("air_quality", "manuSpecificLumi", "airQuality", ("state", "get")),
+                ("display_unit", "manuSpecificLumi", "displayUnit", ("state", "set")),
+                ("voc", "genAnalogInput", "presentValue", ("state", "get")),
+            ],
+        )
+        self.assertEqual(make_write(plan, "display_unit", "ppb_fahrenheit").value, 17)
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificLumi", "airQuality", 4)),
+            {"air_quality": "poor"},
+        )
+
+    def test_lumi_vibration_and_sensor_settings_are_static(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi vibration",
+            vendor: "Aqara",
+            extend: [
+                lumi.lumiModernExtend.lumiVibration(),
+                lumi.lumiModernExtend.lumiSensitivityAdjustment(),
+                lumi.lumiModernExtend.lumiReportInterval(),
+            ],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-vibration.ts").devices[0])
+        self.assertFalse(plan.device.partial)
+        self.assertEqual(make_write(plan, "sensitivity_adjustment", "low").value, 3)
+        self.assertEqual(make_write(plan, "report_interval", "5s").value, 2)
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificLumi", "movement", 1)),
+            {"action": "movement"},
+        )
+
+    def test_lumi_static_state_action_is_a_static_auxiliary_binding(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Modern Lumi static action",
+            vendor: "Aqara",
+            extend: [
+                lumi.lumiModernExtend.lumiAction({extraActions: ["static"]}),
+                lumi.lumiModernExtend.lumiStaticStateAction(),
+            ],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "lumi-static-action.ts").devices[0])
+        self.assertFalse(plan.device.partial)
+        self.assertEqual(
+            apply_report(plan, RuntimeReport("manuSpecificLumi", 0x01F3, 1)),
+            {"action": "static"},
+        )
 
     def test_standard_converter_aliases_are_normalized_to_zcl(self) -> None:
         source = """
@@ -1207,7 +1491,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.custom_cluster_specs[0].name, "manuSpecificLumi")
         self.assertEqual(device.custom_cluster_specs[0].cluster_id, 0xFCC0)
         self.assertEqual(device.custom_cluster_specs[0].manufacturer_code, 0x115F)
-        self.assertEqual(len(device.custom_cluster_specs[0].attributes), 28)
+        self.assertEqual(len(device.custom_cluster_specs[0].attributes), 49)
 
     def test_ikea_unknown_cluster_macro_is_declarative(self) -> None:
         source = """
