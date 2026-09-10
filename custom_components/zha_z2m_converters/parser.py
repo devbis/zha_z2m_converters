@@ -32,6 +32,25 @@ class UnsupportedSyntax(Exception):
 _MISSING = object()
 
 
+# Values mirrored from zigbee-herdsman's ManufacturerCode enum.  Keeping this
+# small registry local makes configure parsing deterministic and does not
+# require importing or executing the TypeScript dependency.
+_STATIC_MANUFACTURER_CODES = {
+    "CENTRALITE_SYSTEMS_INC": 0x104E,
+    "DANFOSS_A_S": 0x1246,
+    "DATEK_WIRELESS_AS": 0x1337,
+    "HEIMAN_TECHNOLOGY_CO_LTD": 0x120B,
+    "MEAZON_S_A": 0x1136,
+    "NXP_SEMICONDUCTORS": 0x1037,
+    "SCHNEIDER_ELECTRIC": 0x105E,
+    "SHENZHEN_SUNRICHER_TECHNOLOGY_LTD": 0x1224,
+    "SIGNIFY_NETHERLANDS_B_V": 0x100B,
+    "SINOPE_TECHNOLOGIES": 0x119C,
+    "SMARTTHINGS_INC": 0x110A,
+    "VIESSMANN_ELEKTRONIK_GMBH": 0x1221,
+}
+
+
 @dataclass
 class _ObjectParser:
     tokens: list[Token]
@@ -103,7 +122,8 @@ class _ObjectParser:
             self.take()
             value = token.value.replace("_", "")
             try:
-                return int(value, 0) if not any(c in value for c in ".eE") else float(value)
+                is_integer_prefix = value.lower().startswith(("0x", "0b", "0o"))
+                return int(value, 0) if is_integer_prefix or not any(c in value for c in ".eE") else float(value)
             except ValueError as exc:
                 raise UnsupportedSyntax(f"invalid number {value}") from exc
         if token.value in ("true", "false", "null", "undefined"):
@@ -694,6 +714,7 @@ def _find_static_constants(tokens: list[Token]) -> dict[str, Any]:
                 "SECONDS_5": 5,
             },
         },
+        "Zcl": {"ManufacturerCode": dict(_STATIC_MANUFACTURER_CODES)},
     }
     for index, token in enumerate(tokens):
         if token.value not in {"const", "let", "var"}:
@@ -3106,7 +3127,7 @@ def _resolve_static_config_expression(value: Any, locals_: dict[str, Any]) -> An
 
 
 def _is_coordinator_endpoint(value: Any) -> bool:
-    return _identifier(value) in {"coordinatorEndpoint", "coordinator"}
+    return _identifier(value) in {"coordinatorEndpoint", "coordinator", "cordinatorEndpoint"}
 
 
 def _static_manufacturer_option(value: Any, locals_: dict[str, Any]) -> tuple[bool, int | None]:

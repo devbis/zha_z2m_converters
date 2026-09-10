@@ -8,11 +8,11 @@ the safe declarative translation to ZHA.
 
 | Status | Definitions | Share |
 |---|---:|---:|
-| Fully supported | 2,579 | 57.6% |
-| Usable partial | 1,621 | 36.2% |
+| Fully supported | 2,583 | 57.7% |
+| Usable partial | 1,618 | 36.1% |
 | Metadata only | 11 | 0.2% |
 | Unusable partial | 263 | 5.9% |
-| Rejected | 4 | 0.1% |
+| Rejected | 3 | 0.1% |
 | **Total** | **4,478** | **100%** |
 
 ## Remaining problem areas
@@ -20,7 +20,7 @@ the safe declarative translation to ZHA.
 | Problem | Definitions |
 |---|---:|
 | unsupported converter binding | 836 |
-| unsupported extend macro | 607 |
+| unsupported extend macro | 604 |
 | dynamic expose or other expression | 306 |
 | no usable data path | 263 |
 | unsupported definition field | 135 |
@@ -29,7 +29,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `deviceAddCustomCluster` | 238 |
+| `deviceAddCustomCluster` | 230 |
 | `tuyaBase` | 133 |
 | `lumiPreventReset` | 61 |
 | `commandsScenes` | 30 |
@@ -81,9 +81,9 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 374 |
+| `configure` | 327 |
 | `exposes` | 87 |
-| `onEvent` | 15 |
+| `onEvent` | 16 |
 | `endpoint` | 10 |
 | `extend` | 6 |
 | `fromZigbee` | 5 |
@@ -101,20 +101,20 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 374 |
-| dynamic syntax or control flow | 193 |
+| Any unsupported configure part | 327 |
+| dynamic syntax or control flow | 189 |
 | unsupported endpoint/device operation | 108 |
-| unsupported endpoint operation arguments | 100 |
-| unsupported configure call | 51 |
+| unsupported configure call | 52 |
+| unsupported endpoint operation arguments | 49 |
 | direct or unsupported configure expression | 45 |
-| unsupported reporting arguments | 8 |
+| unsupported reporting arguments | 5 |
 | unsupported reporting helper | 3 |
 
 ### Configure: dynamic syntax or control flow
 
 | Item | Definitions |
 |---|---:|
-| `<parser-marked>` | 183 |
+| `<parser-marked>` | 179 |
 | `<unknown>` | 10 |
 
 ### Configure: unsupported endpoint/device operation
@@ -135,20 +135,20 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `if` | 27 |
+| `m.setupAttributes` | 5 |
 | `utils.attachOutputCluster` | 5 |
-| `m.setupAttributes` | 4 |
 | `utils.sleep` | 3 |
-| `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
 | `heiman.configureReporting.batteryState` | 2 |
+| `heiman.configureReporting.pm10measuredValue` | 2 |
+| `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
 | `heiman.configureReporting.pm25MeasuredValue` | 2 |
 | `heiman.configureReporting.aqiMeasuredValue` | 2 |
-| `heiman.configureReporting.pm10measuredValue` | 2 |
 | `syncTime` | 2 |
-| `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
+| `shutterConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `logger.debug` | 1 |
 | `initConfig` | 1 |
+| `logger.debug` | 1 |
 | `heiman.configureReporting.tvocMeasuredValue` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
@@ -160,26 +160,24 @@ Categories can overlap when one definition has several different gaps.
 
 | Item | Definitions |
 |---|---:|
-| `endpoint.read` | 59 |
-| `endpoint.configureReporting` | 19 |
-| `endpoint.write` | 17 |
+| `endpoint.read` | 21 |
 | `endpoint1.write` | 12 |
+| `endpoint.write` | 9 |
+| `endpoint.configureReporting` | 6 |
 | `endpoint.command` | 2 |
-| `endpoint1.read` | 2 |
 | `endpoint.bind` | 2 |
 | `mainController.read` | 1 |
-| `ep2.bind` | 1 |
+| `endpoint1.read` | 1 |
 | `ep1.bind` | 1 |
-| `endpoint2.write` | 1 |
+| `ep2.bind` | 1 |
 
 ### Configure: unsupported reporting arguments
 
 | Item | Definitions |
 |---|---:|
-| `reporting.bind` | 6 |
-| `reporting.onOff` | 1 |
-| `reporting.humidity` | 1 |
+| `reporting.bind` | 4 |
 | `reporting.temperature` | 1 |
+| `reporting.humidity` | 1 |
 | `reporting.batteryVoltage` | 1 |
 
 ### Configure: direct or unsupported configure expression
@@ -201,7 +199,6 @@ Categories can overlap when one definition has several different gaps.
 
 | Definition | Source | Reason |
 |---|---|---|
-| `CK-MG22-JLDJ-01(7015)` | `custom_components/zha_z2m_converters/converters/zigbee-herdsman-converters/src/devices/ewelink.ts:138` | definition contains unsupported dynamic syntax |
 | `S520567` | `custom_components/zha_z2m_converters/converters/zigbee-herdsman-converters/src/devices/schneider_electric.ts:2068` | definition contains unsupported dynamic syntax |
 | `F00XN00-04-1` | `custom_components/zha_z2m_converters/converters/zigbee-herdsman-converters/src/devices/tuya.ts:2154` | definition contains unsupported dynamic syntax |
 | `S1-R` | `custom_components/zha_z2m_converters/converters/zigbee-herdsman-converters/src/devices/ubisys.ts:689` | definition contains unsupported dynamic syntax |

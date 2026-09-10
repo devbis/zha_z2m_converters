@@ -17,20 +17,20 @@ is refreshed from the snapshot by `scripts/update_readme_coverage.py`.
 <!-- coverage:start -->
 | Status | Definitions | Share | Meaning |
 |:---:|---:|---:|---|
-| ✅ Fully supported | **2,579** | **57.6%** | Static definition and all extracted features are supported. |
-| 🟡 Usable partial | **1,621** | **36.2%** | Some features are missing, but at least one reliable data path remains. |
+| ✅ Fully supported | **2,583** | **57.7%** | Static definition and all extracted features are supported. |
+| 🟡 Usable partial | **1,618** | **36.1%** | Some features are missing, but at least one reliable data path remains. |
 | 🟠 Metadata only | **11** | **0.2%** | Device metadata was recovered, but no usable entity or data binding exists. |
 | 🔴 Unusable partial | **263** | **5.9%** | The remaining functionality depends on unsupported converter logic or has no usable data path. |
-| ⛔ Rejected | **4** | **0.1%** | The definition could not be recovered by the static parser. |
+| ⛔ Rejected | **3** | **0.1%** | The definition could not be recovered by the static parser. |
 | **Total** | **4,478** | **100%** | All definitions found in the snapshot, including rejected definitions. |
 
 ### At a glance
 
-- **4,200 definitions (93.8%)** have either full support or at least one usable
+- **4,201 definitions (93.8%)** have either full support or at least one usable
   supported data path.
 - **274 definitions** still need additional implementation or have no usable
   entity path (`metadata-only` + `unusable partial`).
-- **4 definitions** are currently rejected by the parser.
+- **3 definitions** are currently rejected by the parser.
 <!-- coverage:end -->
 
 ## Installation

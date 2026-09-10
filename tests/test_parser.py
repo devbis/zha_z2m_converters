@@ -1792,6 +1792,27 @@ class ParserTests(unittest.TestCase):
             [0x115F, 0x115F],
         )
 
+    def test_configure_resolves_zcl_manufacturer_codes(self) -> None:
+        source = """
+        import {Zcl} from "zigbee-herdsman";
+        export const definitions = [{
+            zigbeeModel: ["ZCL_MANUFACTURER"],
+            model: "ZCL_MANUFACTURER",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const options = {manufacturerCode: Zcl.ManufacturerCode.DATEK_WIRELESS_AS};
+                const endpoint = device.getEndpoint(1);
+                await endpoint.read("ssIasZone", ["zoneStatus"], options);
+                await endpoint.configureReporting("ssIasZone", [
+                    {attribute: "zoneStatus", minimumReportInterval: 1, maximumReportInterval: 3600, reportableChange: 1},
+                ], options);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-zcl-manufacturer.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual([action.manufacturer_code for action in device.configure_actions], [0x1337, 0x1337])
+
     def test_configure_supports_literal_writes(self) -> None:
         source = """
         const options = {manufacturerCode: 0x115f};
@@ -2032,6 +2053,7 @@ class ParserTests(unittest.TestCase):
                     {attribute: "onOff", minimumReportInterval: 0, maximumReportInterval: constants.repInterval.HOUR, reportableChange: 0},
                 ]);
                 await endpoint.configureReporting("genOnOff", payload);
+                await reporting.onOff(endpoint, {min: 1, max: 0xfffe});
                 await reporting.temperature(endpoint, {
                     min: constants.repInterval.MINUTES_10,
                     max: constants.repInterval.MAX,
@@ -2050,6 +2072,7 @@ class ParserTests(unittest.TestCase):
             [
                 ("genOnOff", 0, 3600, 0),
                 ("genOnOff", 0, 3600, 0),
+                ("genOnOff", 1, 65534, 0),
                 ("msTemperatureMeasurement", 600, 65000, 100),
             ],
         )
