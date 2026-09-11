@@ -583,7 +583,10 @@ class _ObjectParser:
         for item in values:
             nested = _ObjectParser(body, constants={**(self.constants or {}), variable.value: item})
             parsed = nested.parse_configure_statements()
-            statements.extend(parsed[0])
+            statements.extend(
+                _specialize_configure_statement(statement, nested.configure_locals or {})
+                for statement in parsed[0]
+            )
             unsupported = unsupported or parsed[1]
         return statements, unsupported
 
@@ -824,6 +827,43 @@ def _matching_delimiter(tokens: list[Token], start: int) -> int | None:
             if depth == 0:
                 return index
     return None
+
+
+def _specialize_configure_statement(statement: Any, locals_: dict[str, Any]) -> Any:
+    """Substitute static loop locals while preserving calls as declarative AST."""
+    if isinstance(statement, list):
+        return [_specialize_configure_statement(item, locals_) for item in statement]
+    if not isinstance(statement, dict):
+        return statement
+    call = statement.get("__call__")
+    if isinstance(call, str):
+        args = [_specialize_configure_statement(item, locals_) for item in statement.get("args", [])]
+        prefix, separator, method = call.partition(".")
+        receiver = locals_.get(prefix)
+        if separator and receiver is not None:
+            receiver = _specialize_configure_statement(receiver, locals_)
+            if isinstance(receiver, dict) and receiver.get("__call__") == "device.getEndpoint":
+                return {
+                    "__fluent__": receiver,
+                    "methods": [{"name": method, "args": args}],
+                }
+        return {**statement, "args": args}
+    if "__fluent__" in statement:
+        return {
+            **statement,
+            "__fluent__": _specialize_configure_statement(statement["__fluent__"], locals_),
+            "methods": [
+                {
+                    **method,
+                    "args": [_specialize_configure_statement(item, locals_) for item in method.get("args", [])],
+                }
+                for method in statement.get("methods", [])
+            ],
+        }
+    return {
+        key: _specialize_configure_statement(value, locals_)
+        for key, value in statement.items()
+    }
 
 
 def _find_static_configure_functions(
@@ -3361,7 +3401,8 @@ def _configure_endpoint(value: Any, locals_: dict[str, Any]) -> str | int | None
             return _configure_endpoint(local, locals_)
     if isinstance(value, dict) and value.get("__call__") == "device.getEndpoint":
         args = value.get("args", [])
-        return _static_value(args[0]) if args and isinstance(_static_value(args[0]), (str, int)) else None
+        endpoint = _static_value(_resolve_config_value(args[0], locals_)) if args else None
+        return endpoint if isinstance(endpoint, (str, int)) else None
     if isinstance(value, dict) and value.get("__indexed__") in {"device.endpoints", "device.endpoint"}:
         index = value.get("index")
         if isinstance(index, int):
@@ -3379,6 +3420,14 @@ def _resolve_config_value(value: Any, locals_: dict[str, Any]) -> Any:
     resolved_expression = _resolve_static_config_expression(value, locals_)
     if resolved_expression is not _MISSING:
         return resolved_expression
+    if isinstance(value, dict) and set(value) == {"__indexed__", "index"}:
+        source = locals_.get(str(value["__indexed__"]))
+        index = _resolve_config_value(value["index"], locals_)
+        if isinstance(source, dict) and isinstance(index, (str, int)) and index in source:
+            return _resolve_config_value(source[index], locals_)
+        if isinstance(source, list) and isinstance(index, int) and 0 <= index < len(source):
+            return _resolve_config_value(source[index], locals_)
+        return value
     if isinstance(value, dict) and set(value) == {"__identifier__"}:
         name = str(value["__identifier__"])
         if name in locals_:
@@ -3798,7 +3847,7 @@ def _configure_actions(
             base = statement["__fluent__"]
             endpoint = _configure_endpoint(base, locals_)
             for method in statement.get("methods", []):
-                if method.get("name") not in {"bind", "read", "write", "command"} or endpoint is None:
+                if method.get("name") not in {"bind", "read", "write", "command", "configureReporting"} or endpoint is None:
                     unsupported = True
                     continue
                 args = method.get("args", [])
@@ -3813,6 +3862,22 @@ def _configure_actions(
                     write_action = _configure_write_action(endpoint, args, locals_)
                     if write_action is not None:
                         actions.append(write_action)
+                    else:
+                        unsupported = True
+                    continue
+                if method.get("name") == "configureReporting":
+                    options_valid, manufacturer_code = _static_manufacturer_option(
+                        args[2] if len(args) == 3 else None,
+                        locals_,
+                    ) if len(args) in {2, 3} else (False, None)
+                    reporting_actions = _configure_reporting_actions(
+                        endpoint,
+                        _static_value(args[0]) if args else None,
+                        _resolve_config_value(args[1], locals_) if len(args) >= 2 else None,
+                        manufacturer_code if options_valid else None,
+                    )
+                    if reporting_actions is not None and options_valid:
+                        actions.extend(reporting_actions)
                     else:
                         unsupported = True
                     continue
