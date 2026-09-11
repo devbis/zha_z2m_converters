@@ -2688,6 +2688,26 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_configure_extracts_output_cluster_attachment(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["OUTPUT_CLUSTER"],
+            model: "Output cluster",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                utils.attachOutputCluster(device, endpoint, "genOta");
+                await reporting.bind(endpoint, coordinatorEndpoint, ["genOta"]);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-output-cluster.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(item.endpoint, item.cluster, item.direction) for item in device.endpoint_clusters],
+            [(1, "genOta", "output")],
+        )
+
     def test_configure_extracts_static_device_type_assignment(self) -> None:
         source = """
         export const definitions = [{

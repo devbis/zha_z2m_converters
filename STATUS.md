@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 152 |
+| `configure` | 148 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -100,9 +100,9 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 152 |
+| Any unsupported configure part | 148 |
 | dynamic syntax or control flow | 140 |
-| unsupported configure call | 48 |
+| unsupported configure call | 44 |
 | unsupported endpoint/device operation | 1 |
 
 ### Configure: dynamic syntax or control flow
@@ -117,7 +117,6 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `if` | 30 |
-| `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
 | `syncTime` | 2 |
 | `lightConfiguration` | 1 |
@@ -129,10 +128,10 @@ Categories can overlap when one definition has several different gaps.
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
-| `readFd22Attributes` | 1 |
 | `delay` | 1 |
 | `setProductName` | 1 |
 | `readReportingConfiguration` | 1 |
+| `readFd22Attributes` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
 

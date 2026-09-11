@@ -3955,6 +3955,24 @@ def _setup_attributes_actions(args: list[Any], locals_: dict[str, Any]) -> list[
     return actions
 
 
+def _configure_endpoint_cluster_additions(value: Any, constants: dict[str, Any] | None = None) -> list[EndpointCluster]:
+    """Extract safe output-cluster additions made by attachOutputCluster."""
+    if not isinstance(value, dict) or "__configure__" not in value:
+        return []
+    locals_ = {**(constants or {}), **(value.get("__locals__", {}) if isinstance(value.get("__locals__"), dict) else {})}
+    additions: list[EndpointCluster] = []
+    for statement in value["__configure__"]:
+        if _call_name(statement) != "utils.attachOutputCluster":
+            continue
+        args = statement.get("args", []) if isinstance(statement, dict) else []
+        endpoint = _configure_endpoint(args[1], locals_) if len(args) == 3 else None
+        cluster = _static_value(args[2]) if len(args) == 3 else None
+        if len(args) == 3 and _identifier(args[0]) == "device":
+            if isinstance(endpoint, int) and isinstance(cluster, (str, int)):
+                additions.append(EndpointCluster(endpoint, cluster, "output"))
+    return additions
+
+
 def _reporting_helper_actions(call: str | None, args: list[Any], locals_: dict[str, Any]) -> list[ConfigureAction] | None:
     if not call or not call.startswith("reporting."):
         return None
@@ -4209,6 +4227,16 @@ def _configure_actions(
             else:
                 unsupported = True
             continue
+        if call == "utils.attachOutputCluster":
+            args_valid = (
+                len(args) == 3
+                and _identifier(args[0]) == "device"
+                and _configure_endpoint(args[1], locals_) is not None
+                and isinstance(_static_value(args[2]), (str, int))
+            )
+            if not args_valid:
+                unsupported = True
+            continue
         if call in {"tuya.configureQuery", "tuya.configureBindBasic"}:
             if len(args) == 2 and _identifier(args[0]) == "device" and _is_coordinator_endpoint(args[1]):
                 if call.endswith("configureQuery"):
@@ -4438,6 +4466,7 @@ def _device(
     to_zigbee = _bindings(raw.get("toZigbee"), "command")
     configure_actions, configure_unsupported = _configure_actions(raw.get("configure"), constants)
     endpoint_clusters: list[EndpointCluster] = []
+    endpoint_clusters.extend(_configure_endpoint_cluster_additions(raw.get("configure"), constants))
     custom_clusters: list[str] = []
     custom_cluster_specs: list[CustomClusterSpec] = []
     extends: list[str] = []
