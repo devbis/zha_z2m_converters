@@ -968,6 +968,27 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
                 node_descriptor = getattr(target, "node_desc", None)
                 if node_descriptor is not None and hasattr(node_descriptor, "power_source"):
                     setattr(node_descriptor, "power_source", property_value)
+            elif property_name == "type":
+                target = zigpy_device or device
+                for attribute_name in ("type", "device_type"):
+                    if hasattr(target, attribute_name):
+                        setattr(target, attribute_name, property_value)
+            elif property_name == "softwareBuildID":
+                target = zigpy_device or device
+                if isinstance(property_value, dict) and set(property_value) == {"__device_property_template__"}:
+                    template = property_value["__device_property_template__"]
+                    if isinstance(template, dict) and template.get("source") == "applicationVersion":
+                        application_version = None
+                        for attribute_name in ("application_version", "applicationVersion"):
+                            if hasattr(target, attribute_name):
+                                application_version = getattr(target, attribute_name)
+                                break
+                        if application_version is not None:
+                            property_value = f"{template.get('prefix', '')}{application_version}"
+                if isinstance(property_value, str):
+                    for attribute_name in ("software_build_id", "softwareBuildID"):
+                        if hasattr(target, attribute_name):
+                            setattr(target, attribute_name, property_value)
             continue
         endpoint_id, endpoint = _resolve_configure_endpoint(endpoints, action.endpoint)
         if endpoint is None:

@@ -390,7 +390,7 @@ class _ObjectParser:
             self.current().value == "device"
             and self.index + 3 < len(self.tokens)
             and self.tokens[self.index + 1].value == "."
-            and self.tokens[self.index + 2].value in {"powerSource"}
+            and self.tokens[self.index + 2].value in {"powerSource", "softwareBuildID", "type"}
             and self.tokens[self.index + 3].value == "="
         )
 
@@ -400,8 +400,24 @@ class _ObjectParser:
         self.take(".")
         property_name = self.take().value
         self.take("=")
+        if property_name == "softwareBuildID" and self.current().kind == "string":
+            template = self.current().value
+            match = re.fullmatch(r"`(.*)\$\{device\.applicationVersion\}`", template)
+            if match:
+                self.take()
+                return {
+                    "__set_device_property__": {
+                        "name": property_name,
+                        "value": {
+                            "__device_property_template__": {
+                                "source": "applicationVersion",
+                                "prefix": match.group(1),
+                            }
+                        },
+                    }
+                }
         value = self.parse_value()
-        if not isinstance(value, str):
+        if property_name in {"powerSource", "softwareBuildID", "type"} and not isinstance(value, str):
             raise UnsupportedSyntax("device metadata assignment must use a string literal")
         return {"__set_device_property__": {"name": property_name, "value": value}}
 
@@ -3537,15 +3553,38 @@ def _configure_actions(
             continue
         if "__set_device_property__" in statement:
             property_value = statement["__set_device_property__"]
+            value = property_value.get("value") if isinstance(property_value, dict) else None
+            template = value.get("__device_property_template__") if isinstance(value, dict) else None
+            template_value = (
+                isinstance(template, dict)
+                and set(template) == {"source", "prefix"}
+                and template.get("source") == "applicationVersion"
+                and isinstance(template.get("prefix"), str)
+            )
             if (
                 isinstance(property_value, dict)
-                and property_value.get("name") == "powerSource"
-                and isinstance(property_value.get("value"), str)
+                and property_value.get("name") in {"powerSource", "type"}
+                and isinstance(value, str)
             ):
                 actions.append(
                     ConfigureAction(
                         "set_device_property",
-                        payload={"name": "powerSource", "value": property_value["value"]},
+                        payload={
+                            "name": property_value["name"],
+                            "value": property_value["value"],
+                        },
+                        target="device",
+                    )
+                )
+            elif (
+                isinstance(property_value, dict)
+                and property_value.get("name") == "softwareBuildID"
+                and template_value
+            ):
+                actions.append(
+                    ConfigureAction(
+                        "set_device_property",
+                        payload={"name": "softwareBuildID", "value": value},
                         target="device",
                     )
                 )
@@ -3761,7 +3800,7 @@ def _configure_actions(
         if heiman_action is not None:
             actions.append(heiman_action)
             continue
-        if call == "device.save" and not args:
+        if call in {"device.save", "endpoint.save"} and not args:
             # zigbee-herdsman persists its in-memory device cache here. ZHA
             # keeps the equivalent cluster cache on the live device, so there
             # is no separate wire operation to execute.

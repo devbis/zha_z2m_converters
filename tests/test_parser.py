@@ -1685,6 +1685,9 @@ class ParserTests(unittest.TestCase):
         class ZigpyDevice:
             endpoints = {1: Endpoint()}
             power_source = "Unknown"
+            type = "Router"
+            application_version = 7
+            software_build_id = None
 
         class Device:
             _zigpy_device = ZigpyDevice()
@@ -1709,6 +1712,24 @@ class ParserTests(unittest.TestCase):
                 payload={"name": "powerSource", "value": "Battery"},
                 target="device",
             ),
+            ConfigureAction(
+                "set_device_property",
+                payload={"name": "type", "value": "EndDevice"},
+                target="device",
+            ),
+            ConfigureAction(
+                "set_device_property",
+                payload={
+                    "name": "softwareBuildID",
+                    "value": {
+                        "__device_property_template__": {
+                            "source": "applicationVersion",
+                            "prefix": "0.0.0_00",
+                        }
+                    },
+                },
+                target="device",
+            ),
         )
         asyncio.run(_apply_configure_actions(Device(), actions))
         self.assertEqual(
@@ -1723,6 +1744,8 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(Endpoint.in_clusters[0x0006]._attr_cache, {"onTime": 10})
         self.assertEqual(Device._zigpy_device.power_source, "Battery")
+        self.assertEqual(Device._zigpy_device.type, "EndDevice")
+        self.assertEqual(Device._zigpy_device.software_build_id, "0.0.0_007")
 
     def test_static_configure_actions_pass_manufacturer_code(self) -> None:
         calls = []
@@ -2203,6 +2226,64 @@ class ParserTests(unittest.TestCase):
                 ConfigureAction(
                     "set_device_property",
                     payload={"name": "powerSource", "value": "Mains (single phase)"},
+                    target="device",
+                )
+            ],
+        )
+
+    def test_configure_extracts_static_device_type_assignment(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["DEVICE_TYPE"],
+            model: "Device type",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                device.type = "EndDevice";
+                device.save();
+            },
+        }];
+        """
+        device = parse_source(source, "configure-device-type.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [
+                ConfigureAction(
+                    "set_device_property",
+                    payload={"name": "type", "value": "EndDevice"},
+                    target="device",
+                )
+            ],
+        )
+
+    def test_configure_extracts_static_software_build_id_templates(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["SOFTWARE_BUILD_ID"],
+            model: "Software build id",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                device.softwareBuildID = `0.0.0_00${device.applicationVersion}`;
+                device.save();
+            },
+        }];
+        """
+        device = parse_source(source, "configure-software-build-id.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [
+                ConfigureAction(
+                    "set_device_property",
+                    payload={
+                        "name": "softwareBuildID",
+                        "value": {
+                            "__device_property_template__": {
+                                "source": "applicationVersion",
+                                "prefix": "0.0.0_00",
+                            }
+                        },
+                    },
                     target="device",
                 )
             ],
