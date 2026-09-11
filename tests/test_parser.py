@@ -1716,6 +1716,23 @@ class ParserTests(unittest.TestCase):
             [("firstAttribute",), ("secondAttribute",)],
         )
 
+    def test_static_configure_write_supports_numeric_arithmetic(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["WRITE_ARITHMETIC"],
+            model: "Write arithmetic",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                const interval = 100 - 10;
+                await endpoint.write("genPollCtrl", {checkinInterval: interval * 4});
+            },
+        }];
+        """
+        device = parse_source(source, "configure-write-arithmetic.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.configure_actions[0].payload, {"checkinInterval": 360})
+
     def test_static_configure_actions_execute_only_whitelisted_operations(self) -> None:
         calls = []
 

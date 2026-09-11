@@ -93,11 +93,41 @@ class _ObjectParser:
     def parse_value(self) -> Any:
         """Parse a value and discard the TypeScript-only ``as const`` assertion."""
         value = self._parse_value()
+        value = self._parse_static_arithmetic(value)
         if self.current().value == "as":
             if self.index + 1 >= len(self.tokens) or self.tokens[self.index + 1].value != "const":
                 raise UnsupportedSyntax("only 'as const' assertions are supported")
             self.take("as")
             self.take("const")
+        return value
+
+    def _parse_static_arithmetic(self, value: Any, minimum_precedence: int = 0) -> Any:
+        """Evaluate only numeric arithmetic made from already static values."""
+        precedence = {"+": 1, "-": 1, "*": 2, "/": 2, "%": 2}
+        while self.current().value in precedence:
+            operator = self.current().value
+            if precedence[operator] < minimum_precedence:
+                break
+            self.take()
+            right = self._parse_value()
+            right = self._parse_static_arithmetic(right, precedence[operator] + 1)
+            numeric = lambda item: isinstance(item, (int, float)) and not isinstance(item, bool)
+            if not numeric(value) or not numeric(right):
+                raise UnsupportedSyntax("arithmetic requires numeric static values")
+            if operator == "+":
+                value = value + right
+            elif operator == "-":
+                value = value - right
+            elif operator == "*":
+                value = value * right
+            elif operator == "/":
+                if right == 0:
+                    raise UnsupportedSyntax("arithmetic division by zero")
+                value = value / right
+            else:
+                if right == 0:
+                    raise UnsupportedSyntax("arithmetic modulo by zero")
+                value = value % right
         return value
 
     def _parse_value(self) -> Any:
@@ -152,8 +182,8 @@ class _ObjectParser:
             return {"true": True, "false": False, "null": None, "undefined": None}[token.value]
         if token.value in ("-", "+"):
             sign = self.take().value
-            value = self.parse_value()
-            if not isinstance(value, (int, float)):
+            value = self._parse_value()
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
                 raise UnsupportedSyntax("unary sign requires a number")
             return -value if sign == "-" else value
         if token.kind == "identifier":

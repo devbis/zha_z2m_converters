@@ -81,14 +81,13 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 199 |
+| `configure` | 195 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
 | `extend` | 6 |
 | `fromZigbee` | 5 |
 | `<spread>` | 4 |
-| `zigbeeModel` | 2 |
 | `toZigbee` | 2 |
 | `options` | 1 |
 | `meta` | 1 |
@@ -101,19 +100,19 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 199 |
-| dynamic syntax or control flow | 131 |
+| Any unsupported configure part | 195 |
+| dynamic syntax or control flow | 130 |
 | unsupported configure call | 50 |
 | direct or unsupported configure expression | 45 |
-| unsupported endpoint operation arguments | 9 |
-| unsupported endpoint/device operation | 3 |
+| unsupported endpoint operation arguments | 7 |
 | unsupported reporting arguments | 2 |
+| unsupported endpoint/device operation | 1 |
 
 ### Configure: dynamic syntax or control flow
 
 | Item | Definitions |
 |---|---:|
-| `<parser-marked>` | 121 |
+| `<parser-marked>` | 120 |
 | `<unknown>` | 10 |
 
 ### Configure: unsupported configure call
@@ -128,15 +127,15 @@ Categories can overlap when one definition has several different gaps.
 | `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `initConfig` | 1 |
 | `logger.debug` | 1 |
+| `initConfig` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
-| `delay` | 1 |
-| `setProductName` | 1 |
 | `readFd22Attributes` | 1 |
+| `setProductName` | 1 |
+| `delay` | 1 |
 | `readReportingConfiguration` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
@@ -145,11 +144,10 @@ Categories can overlap when one definition has several different gaps.
 
 | Item | Definitions |
 |---|---:|
-| `endpoint.write` | 3 |
+| `endpoint.write` | 2 |
 | `endpoint.bind` | 2 |
 | `endpoint.command` | 1 |
 | `mainController.read` | 1 |
-| `endpoint1.write` | 1 |
 | `ep1.bind` | 1 |
 | `ep2.bind` | 1 |
 
@@ -174,7 +172,7 @@ Categories can overlap when one definition has several different gaps.
 
 | Item | Definitions |
 |---|---:|
-| `endpoint.saveClusterAttributeKeyValue` | 3 |
+| `endpoint.saveClusterAttributeKeyValue` | 1 |
 
 ## Rejected definitions
 
