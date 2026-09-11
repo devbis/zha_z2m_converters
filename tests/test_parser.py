@@ -1714,6 +1714,30 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_direct_tuya_configure_reference_is_resolved(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["DIRECT_TUYA_CONFIGURE"],
+            model: "Direct Tuya configure",
+            vendor: "Example",
+            configure: tuya.configureMagicPacket,
+        }];
+        """
+        device = parse_source(source, "configure-direct-tuya.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [
+                ConfigureAction(
+                    "read",
+                    0,
+                    "genBasic",
+                    attributes=("manufacturerName", "zclVersion", "appVersion", "modelId", "powerSource", 0xFFFE),
+                    target="device",
+                )
+            ],
+        )
+
     def test_static_configure_command_supports_buffer_from(self) -> None:
         source = """
         export const definitions = [{

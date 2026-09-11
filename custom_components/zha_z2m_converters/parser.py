@@ -904,6 +904,27 @@ def _find_static_configure_functions(
     return functions
 
 
+def _resolve_configure_reference(value: Any) -> dict[str, Any] | None:
+    """Turn a supported configure function reference into a declarative call."""
+    if not isinstance(value, dict) or set(value) != {"__identifier__"}:
+        return None
+    name = str(value["__identifier__"])
+    if name not in {"tuya.configureMagicPacket", "tuya.configureQuery", "tuya.configureBindBasic"}:
+        return None
+    return {
+        "__configure__": [
+            {
+                "__call__": name,
+                "args": [
+                    {"__identifier__": "device"},
+                    {"__identifier__": "coordinatorEndpoint"},
+                ],
+            }
+        ],
+        "__locals__": {},
+    }
+
+
 def _decode_string(value: str) -> str:
     if value.startswith("`"):
         if "${" in value:
@@ -4451,6 +4472,10 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
             )
             if configure_name in configure_functions:
                 raw = {**raw, "configure": configure_functions[configure_name]}
+            else:
+                configure_reference = _resolve_configure_reference(configure)
+                if configure_reference is not None:
+                    raw = {**raw, "configure": configure_reference}
             device = _device(raw, token, filename, result.diagnostics, constants)
             if device:
                 result.devices.append(device)

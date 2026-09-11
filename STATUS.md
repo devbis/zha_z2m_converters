@@ -8,8 +8,8 @@ the safe declarative translation to ZHA.
 
 | Status | Definitions | Share |
 |---|---:|---:|
-| Fully supported | 2,629 | 58.7% |
-| Usable partial | 1,572 | 35.1% |
+| Fully supported | 2,645 | 59.1% |
+| Usable partial | 1,556 | 34.7% |
 | Metadata only | 11 | 0.2% |
 | Unusable partial | 263 | 5.9% |
 | Rejected | 3 | 0.1% |
@@ -21,9 +21,9 @@ the safe declarative translation to ZHA.
 |---|---:|
 | unsupported converter binding | 836 |
 | unsupported extend macro | 604 |
-| dynamic expose or other expression | 314 |
+| dynamic expose or other expression | 315 |
 | no usable data path | 263 |
-| unsupported definition field | 81 |
+| unsupported definition field | 64 |
 
 ### Unsupported extend macros
 
@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 191 |
+| `configure` | 161 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -100,11 +100,11 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 191 |
+| Any unsupported configure part | 161 |
 | dynamic syntax or control flow | 143 |
 | unsupported configure call | 53 |
-| direct or unsupported configure expression | 31 |
 | unsupported endpoint operation arguments | 2 |
+| direct or unsupported configure expression | 1 |
 | unsupported reporting arguments | 1 |
 | unsupported endpoint/device operation | 1 |
 
@@ -127,16 +127,16 @@ Categories can overlap when one definition has several different gaps.
 | `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `logger.debug` | 1 |
 | `initConfig` | 1 |
+| `logger.debug` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
-| `readFd22Attributes` | 1 |
-| `setProductName` | 1 |
 | `delay` | 1 |
+| `setProductName` | 1 |
 | `readReportingConfiguration` | 1 |
+| `readFd22Attributes` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
 
@@ -150,7 +150,6 @@ Categories can overlap when one definition has several different gaps.
 
 | Item | Definitions |
 |---|---:|
-| `tuya.configureMagicPacket` | 30 |
 | `<unknown>` | 1 |
 
 ### Configure: unsupported reporting arguments

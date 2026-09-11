@@ -16,6 +16,7 @@ from .parser import (
     _find_assignments,
     _find_static_constants,
     _find_static_configure_functions,
+    _resolve_configure_reference,
     _string,
     parse_path,
 )
@@ -136,6 +137,7 @@ def _iter_configure_problems(source: Path, result: Any):
                     continue
                 if isinstance(configure, dict) and set(configure) == {"__identifier__"}:
                     configure = configure_functions.get(str(configure["__identifier__"]), configure)
+                    configure = _resolve_configure_reference(configure) or configure
                 vendor, model = _raw_definition_identity(raw)
                 key = (source_file.filename, vendor, model)
                 if not parsed_keys[key]:
