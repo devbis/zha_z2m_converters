@@ -1673,6 +1673,22 @@ class ParserTests(unittest.TestCase):
             [ConfigureAction("bind", 1, "genOnOff", destination_endpoint=11)],
         )
 
+    def test_configure_extracts_device_self_bind(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["SELF_BIND"],
+            model: "Self bind",
+            vendor: "Example",
+            configure: async (device) => {
+                const endpoint = device.getEndpoint(1);
+                await endpoint.bind("genOnOff", endpoint);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-self-bind.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.configure_actions, [ConfigureAction("bind", 1, "genOnOff", destination="device")])
+
     def test_static_configure_commands_and_tuya_helpers_are_extracted(self) -> None:
         source = """
         export const definitions = [{
@@ -1829,6 +1845,8 @@ class ParserTests(unittest.TestCase):
 
         class Destination:
             endpoint = 1
+            addrmode = 0
+            ieee = None
 
         class Application:
             def get_dst_address(self, cluster):
@@ -1836,7 +1854,17 @@ class ParserTests(unittest.TestCase):
 
         class Zdo:
             async def Bind_req(self, source_ieee, source_endpoint, cluster_id, destination):
-                calls.append(("bind_req", source_ieee, source_endpoint, cluster_id, destination.endpoint))
+                calls.append(
+                    (
+                        "bind_req",
+                        source_ieee,
+                        source_endpoint,
+                        cluster_id,
+                        destination.endpoint,
+                        destination.addrmode,
+                        destination.ieee,
+                    )
+                )
 
         class ZigpyDevice:
             endpoints = {1: Endpoint()}
@@ -1854,6 +1882,7 @@ class ParserTests(unittest.TestCase):
         actions = (
             ConfigureAction("bind", 1, "genOnOff"),
             ConfigureAction("bind", 1, "genOnOff", destination_endpoint=11),
+            ConfigureAction("bind", 1, "genOnOff", destination="device"),
             ConfigureAction("read", 1, "genOnOff", attributes=("onOff",)),
             ConfigureAction(
                 "configure_reporting",
@@ -1903,7 +1932,8 @@ class ParserTests(unittest.TestCase):
             calls,
             [
                 ("bind",),
-                ("bind_req", "00:11:22:33:44:55:66:77", 1, 0x0006, 11),
+                ("bind_req", "00:11:22:33:44:55:66:77", 1, 0x0006, 11, 0, None),
+                ("bind_req", "00:11:22:33:44:55:66:77", 1, 0x0006, 1, 3, "00:11:22:33:44:55:66:77"),
                 ("read", ["onOff"]),
                 ("reporting", "onOff", 0, 3600, 0),
                 ("command", "on", {"payloadSize": 1, "expect_reply": False}),

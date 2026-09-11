@@ -79,6 +79,7 @@ class ConfigureAction:
     target: str = "coordinator"
     manufacturer_code: int | None = None
     destination_endpoint: int | None = None
+    destination: str = "coordinator"
 
 
 @dataclass(frozen=True)

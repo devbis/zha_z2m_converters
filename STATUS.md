@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 195 |
+| `configure` | 192 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -100,11 +100,11 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 195 |
+| Any unsupported configure part | 192 |
 | dynamic syntax or control flow | 143 |
 | unsupported configure call | 53 |
 | direct or unsupported configure expression | 31 |
-| unsupported endpoint operation arguments | 6 |
+| unsupported endpoint operation arguments | 3 |
 | unsupported reporting arguments | 2 |
 | unsupported endpoint/device operation | 1 |
 
@@ -124,8 +124,8 @@ Categories can overlap when one definition has several different gaps.
 | `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
 | `syncTime` | 2 |
-| `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
+| `shutterConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
 | `logger.debug` | 1 |
 | `initConfig` | 1 |
@@ -133,10 +133,10 @@ Categories can overlap when one definition has several different gaps.
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
-| `setProductName` | 1 |
-| `readReportingConfiguration` | 1 |
-| `readFd22Attributes` | 1 |
 | `delay` | 1 |
+| `setProductName` | 1 |
+| `readFd22Attributes` | 1 |
+| `readReportingConfiguration` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
 
@@ -145,11 +145,8 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `endpoint.write` | 2 |
-| `endpoint.bind` | 2 |
 | `endpoint.configureReporting` | 1 |
 | `endpoint.read` | 1 |
-| `ep2.bind` | 1 |
-| `ep1.bind` | 1 |
 
 ### Configure: direct or unsupported configure expression
 
@@ -163,8 +160,8 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `reporting.bind` | 2 |
-| `reporting.temperature` | 1 |
 | `reporting.humidity` | 1 |
+| `reporting.temperature` | 1 |
 
 ### Configure: unsupported endpoint/device operation
 

@@ -3824,6 +3824,12 @@ def _configure_actions(
                         cluster = _static_value(args[1])
                     elif _is_coordinator_endpoint(args[1]):
                         cluster = _static_value(args[0])
+                    elif _configure_endpoint(args[1], locals_) == endpoint:
+                        cluster = _static_value(args[0])
+                        if isinstance(cluster, (str, int)):
+                            actions.append(ConfigureAction("bind", endpoint, cluster, destination="device"))
+                            continue
+                        cluster = None
                     else:
                         cluster = None
                     if isinstance(cluster, (str, int)):
@@ -3905,6 +3911,12 @@ def _configure_actions(
                     cluster = _static_value(args[1])
                 elif _is_coordinator_endpoint(args[1]):
                     cluster = _static_value(args[0])
+                elif _configure_endpoint(args[1], locals_) == endpoint:
+                    cluster = _static_value(args[0])
+                    if isinstance(cluster, (str, int)):
+                        actions.append(ConfigureAction("bind", endpoint, cluster, destination="device"))
+                        continue
+                    cluster = None
                 else:
                     cluster = None
                 if isinstance(cluster, (str, int)):

@@ -957,9 +957,10 @@ async def _bind_configure_cluster(
     endpoint_id: int | str,
     cluster: Any,
     destination_endpoint: int | None,
+    destination_target: str = "coordinator",
 ) -> None:
-    """Bind a cluster to the coordinator or to a specific coordinator endpoint."""
-    if destination_endpoint is None:
+    """Bind a cluster to the coordinator or to another endpoint."""
+    if destination_target == "coordinator" and destination_endpoint is None:
         await cluster.bind()
         return
 
@@ -969,12 +970,16 @@ async def _bind_configure_cluster(
     get_destination = getattr(application, "get_dst_address", None)
     bind_request = getattr(zdo, "Bind_req", None)
     if not callable(get_destination) or not callable(bind_request) or source_ieee is None:
-        _LOGGER.warning("Cannot bind cluster %r to coordinator endpoint %s", cluster, destination_endpoint)
+        _LOGGER.warning("Cannot bind cluster %r to %s endpoint %s", cluster, destination_target, destination_endpoint)
         return
 
-    destination = get_destination(cluster)
-    destination.endpoint = destination_endpoint
-    await bind_request(source_ieee, endpoint_id, cluster.cluster_id, destination)
+    destination_address = get_destination(cluster)
+    if destination_target == "device":
+        destination_address.addrmode = 0x03
+        destination_address.ieee = source_ieee
+        destination_endpoint = destination_endpoint if destination_endpoint is not None else endpoint_id
+    destination_address.endpoint = destination_endpoint
+    await bind_request(source_ieee, endpoint_id, cluster.cluster_id, destination_address)
 
 
 async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, ...]) -> None:
@@ -1030,6 +1035,7 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
                     endpoint_id,
                     cluster,
                     action.destination_endpoint,
+                    action.destination,
                 )
             elif action.operation == "read":
                 read_kwargs = (
