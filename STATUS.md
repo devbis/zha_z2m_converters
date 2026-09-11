@@ -104,7 +104,7 @@ Categories can overlap when one definition has several different gaps.
 | Any unsupported configure part | 291 |
 | dynamic syntax or control flow | 189 |
 | unsupported endpoint/device operation | 108 |
-| unsupported configure call | 52 |
+| unsupported configure call | 50 |
 | direct or unsupported configure expression | 45 |
 | unsupported endpoint operation arguments | 11 |
 | unsupported reporting arguments | 4 |
@@ -138,23 +138,22 @@ Categories can overlap when one definition has several different gaps.
 | `m.setupAttributes` | 5 |
 | `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
-| `heiman.configureReporting.aqiMeasuredValue` | 2 |
-| `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
-| `heiman.configureReporting.batteryState` | 2 |
-| `heiman.configureReporting.pm10measuredValue` | 2 |
-| `heiman.configureReporting.pm25MeasuredValue` | 2 |
 | `syncTime` | 2 |
-| `lightConfiguration` | 1 |
 | `shutterConfiguration` | 1 |
+| `lightConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `initConfig` | 1 |
 | `logger.debug` | 1 |
-| `heiman.configureReporting.tvocMeasuredValue` | 1 |
+| `initConfig` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
-| *6 more items* | — |
+| `setProductName` | 1 |
+| `delay` | 1 |
+| `readReportingConfiguration` | 1 |
+| `readFd22Attributes` | 1 |
+| `tuya.sendDataPointEnum` | 1 |
+| `tuya.sendDataPointBool` | 1 |
 
 ### Configure: unsupported endpoint operation arguments
 

@@ -3408,6 +3408,16 @@ _REPORTING_HELPERS: dict[str, tuple[str, str, int | float, int | float, int | fl
 }
 
 
+_HEIMAN_REPORTING_HELPERS: dict[str, tuple[str, str]] = {
+    "pm25MeasuredValue": ("pm25Measurement", "measuredValue"),
+    "formAldehydeMeasuredValue": ("msFormaldehyde", "measuredValue"),
+    "batteryState": ("heimanSpecificAirQuality", "batteryState"),
+    "pm10measuredValue": ("heimanSpecificAirQuality", "pm10measuredValue"),
+    "tvocMeasuredValue": ("heimanSpecificAirQuality", "tvocMeasuredValue"),
+    "aqiMeasuredValue": ("heimanSpecificAirQuality", "aqiMeasuredValue"),
+}
+
+
 def _reporting_helper_actions(call: str | None, args: list[Any], locals_: dict[str, Any]) -> list[ConfigureAction] | None:
     if not call or not call.startswith("reporting."):
         return None
@@ -3445,6 +3455,40 @@ def _reporting_helper_actions(call: str | None, args: list[Any], locals_: dict[s
     if reads_after:
         actions.append(ConfigureAction("read", endpoint, cluster, attributes=(attribute,), target="device"))
     return actions
+
+
+def _heiman_reporting_helper_actions(call: str | None, args: list[Any], locals_: dict[str, Any]) -> ConfigureAction | None:
+    """Expand Heiman's fixed reporting wrappers without executing their code."""
+    if not call or not call.startswith("heiman.configureReporting.") or len(args) not in {1, 2}:
+        return None
+    helper = call.rsplit(".", 1)[-1]
+    definition = _HEIMAN_REPORTING_HELPERS.get(helper)
+    if definition is None:
+        return None
+    endpoint = _configure_endpoint(args[0], locals_)
+    if endpoint is None:
+        return None
+    minimum, maximum, change = 0, 3600, 1
+    if len(args) == 2:
+        overrides = _resolve_config_value(args[1], locals_)
+        if not isinstance(overrides, dict):
+            return None
+        minimum = _static_value(overrides.get("min")) if "min" in overrides else minimum
+        maximum = _static_value(overrides.get("max")) if "max" in overrides else maximum
+        change = _static_value(overrides.get("change")) if "change" in overrides else change
+    if not all(isinstance(value, (int, float)) for value in (minimum, maximum, change)):
+        return None
+    cluster, attribute = definition
+    return ConfigureAction(
+        "configure_reporting",
+        endpoint,
+        cluster,
+        attributes=(attribute,),
+        minimum_interval=minimum,
+        maximum_interval=maximum,
+        reportable_change=change,
+        target="device",
+    )
 
 
 def _configure_actions(
@@ -3670,6 +3714,10 @@ def _configure_actions(
         helper_actions = _reporting_helper_actions(call, args, locals_)
         if helper_actions is not None:
             actions.extend(helper_actions)
+            continue
+        heiman_action = _heiman_reporting_helper_actions(call, args, locals_)
+        if heiman_action is not None:
+            actions.append(heiman_action)
             continue
         if call == "reporting.bind":
             clusters = _resolve_config_value(args[2], locals_) if len(args) == 3 else None

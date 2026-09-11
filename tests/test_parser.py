@@ -2115,6 +2115,34 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(device.configure_actions[0].operation, "write")
         self.assertEqual(device.configure_actions[0].manufacturer_code, 0x115F)
 
+    def test_configure_expands_static_heiman_reporting_helper(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["HEIMAN_REPORTING"],
+            model: "Heiman reporting",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await heiman.configureReporting.pm25MeasuredValue(endpoint);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-heiman-reporting.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions[0],
+            ConfigureAction(
+                "configure_reporting",
+                1,
+                "pm25Measurement",
+                attributes=("measuredValue",),
+                minimum_interval=0,
+                maximum_interval=3600,
+                reportable_change=1,
+                target="device",
+            ),
+        )
+
     def test_custom_electricity_converter_keeps_device_partial(self) -> None:
         source = """
         export const definitions = [{
