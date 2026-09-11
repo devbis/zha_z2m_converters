@@ -8,8 +8,8 @@ the safe declarative translation to ZHA.
 
 | Status | Definitions | Share |
 |---|---:|---:|
-| Fully supported | 2,583 | 57.7% |
-| Usable partial | 1,618 | 36.1% |
+| Fully supported | 2,584 | 57.7% |
+| Usable partial | 1,617 | 36.1% |
 | Metadata only | 11 | 0.2% |
 | Unusable partial | 263 | 5.9% |
 | Rejected | 3 | 0.1% |
@@ -23,7 +23,7 @@ the safe declarative translation to ZHA.
 | unsupported extend macro | 604 |
 | dynamic expose or other expression | 306 |
 | no usable data path | 263 |
-| unsupported definition field | 135 |
+| unsupported definition field | 134 |
 
 ### Unsupported extend macros
 
@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 322 |
+| `configure` | 291 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -101,12 +101,12 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 322 |
+| Any unsupported configure part | 291 |
 | dynamic syntax or control flow | 189 |
 | unsupported endpoint/device operation | 108 |
 | unsupported configure call | 52 |
-| unsupported endpoint operation arguments | 45 |
 | direct or unsupported configure expression | 45 |
+| unsupported endpoint operation arguments | 11 |
 | unsupported reporting arguments | 4 |
 | unsupported reporting helper | 3 |
 
@@ -123,7 +123,7 @@ Categories can overlap when one definition has several different gaps.
 |---|---:|
 | `device.save` | 92 |
 | `device.powerSource` | 62 |
-| `endpoint.saveClusterAttributeKeyValue` | 31 |
+| `endpoint.saveClusterAttributeKeyValue` | 32 |
 | `endpoint1.saveClusterAttributeKeyValue` | 5 |
 | `device.type` | 3 |
 | `device.softwareBuildID` | 2 |
@@ -138,17 +138,17 @@ Categories can overlap when one definition has several different gaps.
 | `m.setupAttributes` | 5 |
 | `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
-| `heiman.configureReporting.pm10measuredValue` | 2 |
-| `heiman.configureReporting.batteryState` | 2 |
 | `heiman.configureReporting.aqiMeasuredValue` | 2 |
-| `heiman.configureReporting.pm25MeasuredValue` | 2 |
 | `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
+| `heiman.configureReporting.batteryState` | 2 |
+| `heiman.configureReporting.pm10measuredValue` | 2 |
+| `heiman.configureReporting.pm25MeasuredValue` | 2 |
 | `syncTime` | 2 |
-| `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
+| `shutterConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `logger.debug` | 1 |
 | `initConfig` | 1 |
+| `logger.debug` | 1 |
 | `heiman.configureReporting.tvocMeasuredValue` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
@@ -160,16 +160,14 @@ Categories can overlap when one definition has several different gaps.
 
 | Item | Definitions |
 |---|---:|
-| `endpoint.read` | 21 |
-| `endpoint1.write` | 12 |
-| `endpoint.write` | 9 |
+| `endpoint.write` | 4 |
 | `endpoint.command` | 2 |
-| `endpoint.configureReporting` | 2 |
 | `endpoint.bind` | 2 |
 | `mainController.read` | 1 |
-| `endpoint1.read` | 1 |
-| `ep1.bind` | 1 |
+| `endpoint1.write` | 1 |
 | `ep2.bind` | 1 |
+| `ep1.bind` | 1 |
+| `endpoint.configureReporting` | 1 |
 
 ### Configure: unsupported reporting arguments
 

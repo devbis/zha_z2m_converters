@@ -64,6 +64,13 @@ _STATIC_REP_INTERVALS = {
 }
 
 
+_STATIC_MODULE_NAMESPACES = {
+    # Exported by src/lib/lumi.ts. This is used by the Aqara/Lumi configure
+    # callbacks as the manufacturer option for manufacturer-specific ZCL.
+    "lumi": {"manufacturerCode": 0x115F},
+}
+
+
 @dataclass
 class _ObjectParser:
     tokens: list[Token]
@@ -282,15 +289,21 @@ class _ObjectParser:
             if key.kind not in ("identifier", "string", "number"):
                 raise UnsupportedSyntax("object key must be static")
             key_value = _decode_string(key.value) if key.kind == "string" else key.value
-            self.take(":")
             value_start = self.index
             try:
-                if key_value == "configure":
-                    result[str(key_value)] = self.parse_configure()
-                elif key_value == "endpoint" and self.looks_like_predicate():
-                    result[str(key_value)] = self.parse_static_endpoint()
+                if self.current().value != ":":
+                    if key.kind != "identifier":
+                        raise UnsupportedSyntax("object shorthand key must be an identifier")
+                    value = _resolve_static_path(self.constants or {}, [key.value])
+                    result[str(key_value)] = value if value is not _MISSING else {"__identifier__": key.value}
                 else:
-                    result[str(key_value)] = self.parse_value()
+                    self.take(":")
+                    if key_value == "configure":
+                        result[str(key_value)] = self.parse_configure()
+                    elif key_value == "endpoint" and self.looks_like_predicate():
+                        result[str(key_value)] = self.parse_static_endpoint()
+                    else:
+                        result[str(key_value)] = self.parse_value()
                 if self.current().value not in (",", "}"):
                     raise UnsupportedSyntax("unsupported expression after property value")
             except UnsupportedSyntax:
@@ -340,6 +353,37 @@ class _ObjectParser:
             raise UnsupportedSyntax("endpoint map must contain only integer endpoint ids")
         return {"__endpoint_map__": value}
 
+    def parse_static_destructuring(self, locals_: dict[str, Any]) -> None:
+        """Bind plain object-destructuring from an already static value."""
+        self.take("{")
+        bindings: list[tuple[str, str]] = []
+        while self.current().value != "}":
+            source_name = self.take()
+            if source_name.kind != "identifier":
+                raise UnsupportedSyntax("destructuring key must be an identifier")
+            local_name = source_name.value
+            if self.current().value == ":":
+                self.take(":")
+                local_token = self.take()
+                if local_token.kind != "identifier":
+                    raise UnsupportedSyntax("destructuring local name must be an identifier")
+                local_name = local_token.value
+            bindings.append((source_name.value, local_name))
+            if self.current().value == ",":
+                self.take(",")
+            elif self.current().value != "}":
+                raise UnsupportedSyntax("expected comma in destructuring pattern")
+        self.take("}")
+        self.take("=")
+        value = self.parse_value()
+        if not isinstance(value, dict) or _contains_dynamic_value(value):
+            raise UnsupportedSyntax("destructuring source must be static")
+        for source_name, local_name in bindings:
+            if source_name not in value:
+                raise UnsupportedSyntax(f"static destructuring key {source_name!r} is unavailable")
+            locals_[local_name] = value[source_name]
+            self.constants[local_name] = value[source_name]
+
     def parse_configure(self) -> Any:
         """Parse a callback shell while retaining only its static call expressions."""
         if self.current().value == "async":
@@ -382,15 +426,18 @@ class _ObjectParser:
             try:
                 if self.current().value in {"const", "let", "var"}:
                     self.take()
-                    name = self.take()
-                    if name.kind != "identifier":
-                        raise UnsupportedSyntax("configure local name must be an identifier")
-                    while self.current().value not in {"=", ";", "}"}:
-                        self.take()
-                    self.take("=")
-                    local_value = self.parse_value()
-                    locals_[name.value] = local_value
-                    self.constants[name.value] = local_value
+                    if self.current().value == "{":
+                        self.parse_static_destructuring(locals_)
+                    else:
+                        name = self.take()
+                        if name.kind != "identifier":
+                            raise UnsupportedSyntax("configure local name must be an identifier")
+                        while self.current().value not in {"=", ";", "}"}:
+                            self.take()
+                        self.take("=")
+                        local_value = self.parse_value()
+                        locals_[name.value] = local_value
+                        self.constants[name.value] = local_value
                 else:
                     if self.current().value == "await":
                         self.take()
@@ -485,15 +532,18 @@ class _ObjectParser:
             try:
                 if self.current().value in {"const", "let", "var"}:
                     self.take()
-                    name = self.take()
-                    if name.kind != "identifier":
-                        raise UnsupportedSyntax("configure local name must be an identifier")
-                    while self.current().value not in {"=", ";"}:
-                        self.take()
-                    self.take("=")
-                    local_value = self.parse_value()
-                    locals_[name.value] = local_value
-                    self.constants[name.value] = local_value
+                    if self.current().value == "{":
+                        self.parse_static_destructuring(locals_)
+                    else:
+                        name = self.take()
+                        if name.kind != "identifier":
+                            raise UnsupportedSyntax("configure local name must be an identifier")
+                        while self.current().value not in {"=", ";"}:
+                            self.take()
+                        self.take("=")
+                        local_value = self.parse_value()
+                        locals_[name.value] = local_value
+                        self.constants[name.value] = local_value
                 else:
                     if self.current().value == "await":
                         self.take()
@@ -719,10 +769,71 @@ def _find_static_constants(tokens: list[Token]) -> dict[str, Any]:
         # constants namespace.
         "repInterval": dict(_STATIC_REP_INTERVALS),
         "Zcl": {"ManufacturerCode": dict(_STATIC_MANUFACTURER_CODES)},
+        **{name: dict(value) for name, value in _STATIC_MODULE_NAMESPACES.items()},
     }
     for index, token in enumerate(tokens):
         if token.value not in {"const", "let", "var"}:
             continue
+
+        # Support only plain object destructuring from a static namespace,
+        # such as `const {manufacturerCode} = lumi`. Defaults, computed keys,
+        # rest bindings, and executable RHS expressions remain unsupported.
+        if index + 1 < len(tokens) and tokens[index + 1].value == "{":
+            pattern_end = _matching_index(tokens, index + 1)
+            if pattern_end is None or pattern_end + 1 >= len(tokens) or tokens[pattern_end + 1].value != "=":
+                continue
+            bindings: list[tuple[str, str]] = []
+            pattern_index = index + 2
+            valid_pattern = True
+            while pattern_index < pattern_end:
+                source_name = tokens[pattern_index]
+                if source_name.kind != "identifier":
+                    valid_pattern = False
+                    break
+                pattern_index += 1
+                local_name = source_name.value
+                if pattern_index < pattern_end and tokens[pattern_index].value == ":":
+                    pattern_index += 1
+                    if pattern_index >= pattern_end or tokens[pattern_index].kind != "identifier":
+                        valid_pattern = False
+                        break
+                    local_name = tokens[pattern_index].value
+                    pattern_index += 1
+                bindings.append((source_name.value, local_name))
+                if pattern_index < pattern_end:
+                    if tokens[pattern_index].value != ",":
+                        valid_pattern = False
+                        break
+                    pattern_index += 1
+            if not valid_pattern:
+                continue
+
+            start = pattern_end + 2
+            end = start
+            depth = 0
+            while end < len(tokens):
+                value = tokens[end].value
+                if value in {"{", "[", "("}:
+                    depth += 1
+                elif value in {"}", "]", ")"}:
+                    depth -= 1
+                if depth == 0 and value == ";":
+                    break
+                end += 1
+            if start >= end:
+                continue
+            parser = _ObjectParser(tokens[start:end], constants={**constants})
+            try:
+                value = parser.parse_value()
+            except UnsupportedSyntax:
+                continue
+            if parser.current().kind != "eof" or not isinstance(value, dict) or _contains_dynamic_value(value):
+                continue
+            for source_name, local_name in bindings:
+                if source_name in value:
+                    constants[local_name] = value[source_name]
+            continue
+
         name_index = index + 1
         while name_index < len(tokens) and tokens[name_index].value not in {"=", ";"}:
             name_index += 1

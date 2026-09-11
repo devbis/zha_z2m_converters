@@ -2096,6 +2096,25 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(device.partial)
         self.assertEqual(device.configure_actions[0].maximum_interval, 3600)
 
+    def test_configure_resolves_static_module_destructuring(self) -> None:
+        source = """
+        import * as lumi from "../lib/lumi";
+        export const definitions = [{
+            zigbeeModel: ["LUMI_CONSTANTS"],
+            model: "Lumi constants",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const {manufacturerCode} = lumi;
+                const endpoint = device.getEndpoint(1);
+                await endpoint.write("manuSpecificLumi", {mode: 1}, {manufacturerCode});
+            },
+        }];
+        """
+        device = parse_source(source, "configure-lumi-constants.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.configure_actions[0].operation, "write")
+        self.assertEqual(device.configure_actions[0].manufacturer_code, 0x115F)
+
     def test_custom_electricity_converter_keeps_device_partial(self) -> None:
         source = """
         export const definitions = [{
