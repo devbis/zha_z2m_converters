@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from enum import IntEnum
 import logging
 import math
@@ -26,6 +27,7 @@ ZCL_CLUSTER_IDS: dict[str, int] = {
     "genLevelCtrl": 0x0008,
     "level_control": 0x0008,
     "genPowerCfg": 0x0001,
+    "genTime": 0x000A,
     "genBinaryInput": 0x001F,
     "genMultistateInput": 0x0012,
     "power_configuration": 0x0001,
@@ -1079,6 +1081,17 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
                         else {}
                     )
                     await cluster.write_attributes(action.payload or {}, **write_kwargs)
+                elif action.operation == "write_time":
+                    zigbee_epoch = datetime(2000, 1, 1, tzinfo=timezone.utc)
+                    now = datetime.now(timezone.utc)
+                    local_offset = now.astimezone().utcoffset()
+                    await cluster.write_attributes(
+                        {
+                            "timeStatus": 3,
+                            "time": round((now - zigbee_epoch).total_seconds()),
+                            "timeZone": int(local_offset.total_seconds()) if local_offset is not None else 0,
+                        }
+                    )
                 elif action.operation == "save_cluster_attributes":
                     attribute_cache = getattr(cluster, "_attr_cache", None)
                     if not isinstance(attribute_cache, dict):

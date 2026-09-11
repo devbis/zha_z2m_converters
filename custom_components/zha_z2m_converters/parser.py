@@ -350,6 +350,9 @@ class _ObjectParser:
                         result[str(key_value)] = self.parse_configure()
                     elif key_value == "endpoint" and self.looks_like_predicate():
                         result[str(key_value)] = self.parse_static_endpoint()
+                    elif key_value == "timeZone":
+                        timezone_value = self.parse_static_heiman_timezone()
+                        result[str(key_value)] = timezone_value if timezone_value is not None else self.parse_value()
                     else:
                         result[str(key_value)] = self.parse_value()
                 if self.current().value not in (",", "}"):
@@ -458,6 +461,41 @@ class _ObjectParser:
         locals_[name] = value
         self.constants[name] = value
 
+    def parse_static_heiman_time_assignment(self) -> tuple[str, Any] | None:
+        """Recognize Heiman's fixed runtime Zigbee time-sync locals."""
+        patterns = {
+            "time": [
+                "const", "time", "=", "Math", ".", "round", "(", "(", "Date", ".", "now", "(", ")",
+                "-", "constants", ".", "OneJanuary2000", ")", "/", "1000", ")",
+            ],
+            "values": [
+                "const", "values", "=", "{", "timeStatus", ":", "3", ",", "time", ":", "time", ",",
+                "timeZone", ":", "new", "Date", "(", ")", ".", "getTimezoneOffset", "(", ")", "*", "-", "1", "*", "60", "}",
+            ],
+        }
+        for name, expected in patterns.items():
+            if [token.value for token in self.tokens[self.index : self.index + len(expected)]] != expected:
+                continue
+            self.index += len(expected)
+            if name == "time":
+                return name, {"__runtime_value__": "zigbee_time"}
+            return name, {
+                "timeStatus": 3,
+                "time": {"__runtime_value__": "zigbee_time"},
+                "timeZone": {"__runtime_value__": "local_timezone"},
+            }
+        return None
+
+    def parse_static_heiman_timezone(self) -> Any | None:
+        """Recognize Heiman's local timezone offset expression."""
+        expected = [
+            "new", "Date", "(", ")", ".", "getTimezoneOffset", "(", ")", "*", "-", "1", "*", "60",
+        ]
+        if [token.value for token in self.tokens[self.index : self.index + len(expected)]] != expected:
+            return None
+        self.index += len(expected)
+        return {"__runtime_value__": "local_timezone"}
+
     def parse_static_device_assignment(self) -> dict[str, Any]:
         """Parse a supported literal device metadata assignment."""
         self.take("device")
@@ -529,7 +567,27 @@ class _ObjectParser:
                     statements.append(self.parse_static_device_assignment())
                 elif self.looks_like_static_local_assignment():
                     self.parse_static_local_assignment(locals_)
-                elif self.current().value in {"const", "let", "var"}:
+                elif self.current().value == "const":
+                    special_local = self.parse_static_heiman_time_assignment()
+                    if special_local is not None:
+                        name, value = special_local
+                        locals_[name] = value
+                        self.constants[name] = value
+                    else:
+                        self.take()
+                        if self.current().value == "{":
+                            self.parse_static_destructuring(locals_)
+                        else:
+                            name = self.take()
+                            if name.kind != "identifier":
+                                raise UnsupportedSyntax("configure local name must be an identifier")
+                            while self.current().value not in {"=", ";", "}"}:
+                                self.take()
+                            self.take("=")
+                            local_value = self.parse_value()
+                            locals_[name.value] = local_value
+                            self.constants[name.value] = local_value
+                elif self.current().value in {"let", "var"}:
                     self.take()
                     if self.current().value == "{":
                         self.parse_static_destructuring(locals_)
@@ -3661,6 +3719,16 @@ def _configure_write_action(
     )
     if not isinstance(cluster, (str, int)) or not isinstance(raw_payload, dict) or not options_valid:
         return None
+
+    if (
+        cluster == "genTime"
+        and raw_payload == {
+            "timeStatus": 3,
+            "time": {"__runtime_value__": "zigbee_time"},
+            "timeZone": {"__runtime_value__": "local_timezone"},
+        }
+    ):
+        return ConfigureAction("write_time", endpoint, cluster, target="device")
 
     payload: dict[str, Any] = {}
     for attribute, raw_value in raw_payload.items():

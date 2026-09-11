@@ -2553,6 +2553,48 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_configure_extracts_heiman_runtime_time_write(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["HEIMAN_TIME"],
+            model: "Heiman time",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                const time = Math.round((Date.now() - constants.OneJanuary2000) / 1000);
+                const values = {timeStatus: 3, time: time, timeZone: new Date().getTimezoneOffset() * -1 * 60};
+                await endpoint.write("genTime", values);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-heiman-time.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.configure_actions, [ConfigureAction("write_time", 1, "genTime", target="device")])
+
+    def test_runtime_writes_current_zigbee_time(self) -> None:
+        calls = []
+
+        class Cluster:
+            cluster_id = 0x000A
+
+            async def write_attributes(self, attributes):
+                calls.append(attributes)
+
+        class Endpoint:
+            in_clusters = {0x000A: Cluster()}
+            out_clusters = {}
+
+        class ZigpyDevice:
+            endpoints = {1: Endpoint()}
+
+        class Device:
+            _zigpy_device = ZigpyDevice()
+
+        asyncio.run(_apply_configure_actions(Device(), (ConfigureAction("write_time", 1, "genTime"),)))
+        self.assertEqual(calls[0]["timeStatus"], 3)
+        self.assertIsInstance(calls[0]["time"], int)
+        self.assertIsInstance(calls[0]["timeZone"], int)
+
     def test_configure_extracts_static_device_type_assignment(self) -> None:
         source = """
         export const definitions = [{

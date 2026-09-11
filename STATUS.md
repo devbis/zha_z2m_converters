@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 160 |
+| `configure` | 158 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -100,10 +100,9 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 160 |
-| dynamic syntax or control flow | 143 |
+| Any unsupported configure part | 158 |
+| dynamic syntax or control flow | 141 |
 | unsupported configure call | 53 |
-| unsupported endpoint operation arguments | 2 |
 | unsupported reporting arguments | 1 |
 | unsupported endpoint/device operation | 1 |
 
@@ -111,7 +110,7 @@ Categories can overlap when one definition has several different gaps.
 
 | Item | Definitions |
 |---|---:|
-| `<parser-marked>` | 133 |
+| `<parser-marked>` | 131 |
 | `<unknown>` | 10 |
 
 ### Configure: unsupported configure call
@@ -123,35 +122,29 @@ Categories can overlap when one definition has several different gaps.
 | `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
 | `syncTime` | 2 |
-| `lightConfiguration` | 1 |
 | `shutterConfiguration` | 1 |
+| `lightConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `initConfig` | 1 |
 | `logger.debug` | 1 |
+| `initConfig` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
 | `readFd22Attributes` | 1 |
-| `setProductName` | 1 |
-| `delay` | 1 |
 | `readReportingConfiguration` | 1 |
+| `delay` | 1 |
+| `setProductName` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
-
-### Configure: unsupported endpoint operation arguments
-
-| Item | Definitions |
-|---|---:|
-| `endpoint.write` | 2 |
 
 ### Configure: unsupported reporting arguments
 
 | Item | Definitions |
 |---|---:|
-| `reporting.bind` | 1 |
 | `reporting.humidity` | 1 |
 | `reporting.temperature` | 1 |
+| `reporting.bind` | 1 |
 
 ### Configure: unsupported endpoint/device operation
 
