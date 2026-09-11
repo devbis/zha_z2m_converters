@@ -2731,6 +2731,24 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_configure_extracts_fixed_delay(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["DELAY"],
+            model: "Delay",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                await utils.sleep(2000);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-delay.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [ConfigureAction("delay", payload={"milliseconds": 2000}, target="device")],
+        )
+
     def test_configure_extracts_static_device_type_assignment(self) -> None:
         source = """
         export const definitions = [{

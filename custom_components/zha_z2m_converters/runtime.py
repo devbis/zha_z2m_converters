@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import IntEnum
@@ -990,6 +991,11 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
     endpoints = getattr(zigpy_device, "endpoints", {})
     for action in actions:
         if action.condition and not _configure_condition_matches(zigpy_device or device, action.condition):
+            continue
+        if action.operation == "delay":
+            milliseconds = (action.payload or {}).get("milliseconds")
+            if isinstance(milliseconds, (int, float)) and milliseconds >= 0:
+                await asyncio.sleep(milliseconds / 1000)
             continue
         if action.operation == "set_device_property":
             property_name = (action.payload or {}).get("name")

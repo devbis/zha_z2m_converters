@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 148 |
+| `configure` | 145 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -100,9 +100,9 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 148 |
+| Any unsupported configure part | 145 |
 | dynamic syntax or control flow | 140 |
-| unsupported configure call | 42 |
+| unsupported configure call | 39 |
 | unsupported endpoint/device operation | 1 |
 
 ### Configure: dynamic syntax or control flow
@@ -117,7 +117,6 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `if` | 30 |
-| `utils.sleep` | 3 |
 | `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |

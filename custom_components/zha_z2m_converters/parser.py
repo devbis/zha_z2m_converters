@@ -4252,6 +4252,19 @@ def _configure_actions(
                     )
                 )
             continue
+        if call == "utils.sleep":
+            delay = _static_value(args[0]) if len(args) == 1 else None
+            if isinstance(delay, (int, float)) and not isinstance(delay, bool) and delay >= 0:
+                actions.append(
+                    ConfigureAction(
+                        "delay",
+                        payload={"milliseconds": delay},
+                        target="device",
+                    )
+                )
+            else:
+                unsupported = True
+            continue
         if call in {"tuya.configureQuery", "tuya.configureBindBasic"}:
             if len(args) == 2 and _identifier(args[0]) == "device" and _is_coordinator_endpoint(args[1]):
                 if call.endswith("configureQuery"):
