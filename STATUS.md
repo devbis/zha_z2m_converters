@@ -106,8 +106,8 @@ Categories can overlap when one definition has several different gaps.
 | unsupported configure call | 50 |
 | direct or unsupported configure expression | 45 |
 | unsupported endpoint operation arguments | 10 |
-| unsupported reporting arguments | 4 |
 | unsupported endpoint/device operation | 3 |
+| unsupported reporting arguments | 2 |
 
 ### Configure: dynamic syntax or control flow
 
@@ -125,19 +125,19 @@ Categories can overlap when one definition has several different gaps.
 | `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
 | `syncTime` | 2 |
-| `lightConfiguration` | 1 |
 | `shutterConfiguration` | 1 |
+| `lightConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `initConfig` | 1 |
 | `logger.debug` | 1 |
+| `initConfig` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
-| `readReportingConfiguration` | 1 |
+| `setProductName` | 1 |
 | `readFd22Attributes` | 1 |
 | `delay` | 1 |
-| `setProductName` | 1 |
+| `readReportingConfiguration` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
 
@@ -150,17 +150,17 @@ Categories can overlap when one definition has several different gaps.
 | `endpoint.command` | 1 |
 | `mainController.read` | 1 |
 | `endpoint1.write` | 1 |
-| `ep1.bind` | 1 |
 | `ep2.bind` | 1 |
+| `ep1.bind` | 1 |
 | `endpoint.configureReporting` | 1 |
 
 ### Configure: unsupported reporting arguments
 
 | Item | Definitions |
 |---|---:|
-| `reporting.bind` | 4 |
-| `reporting.humidity` | 1 |
+| `reporting.bind` | 2 |
 | `reporting.temperature` | 1 |
+| `reporting.humidity` | 1 |
 
 ### Configure: direct or unsupported configure expression
 

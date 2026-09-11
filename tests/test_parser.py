@@ -1629,6 +1629,26 @@ class ParserTests(unittest.TestCase):
         plan = build_runtime_plan(device)
         self.assertEqual(plan.configure_actions, device.configure_actions)
 
+    def test_configure_extracts_coordinator_endpoint_bind(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["COORDINATOR_ENDPOINT_BIND"],
+            model: "Coordinator endpoint bind",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                const coordinatorEndpointB = coordinatorEndpoint.getDevice().getEndpoint(11);
+                await reporting.bind(endpoint, coordinatorEndpointB, ["genOnOff"]);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-coordinator-endpoint-bind.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [ConfigureAction("bind", 1, "genOnOff", destination_endpoint=11)],
+        )
+
     def test_static_configure_commands_and_tuya_helpers_are_extracted(self) -> None:
         source = """
         export const definitions = [{
@@ -1724,8 +1744,22 @@ class ParserTests(unittest.TestCase):
             in_clusters = {0x0006: Cluster()}
             out_clusters = {}
 
+        class Destination:
+            endpoint = 1
+
+        class Application:
+            def get_dst_address(self, cluster):
+                return Destination()
+
+        class Zdo:
+            async def Bind_req(self, source_ieee, source_endpoint, cluster_id, destination):
+                calls.append(("bind_req", source_ieee, source_endpoint, cluster_id, destination.endpoint))
+
         class ZigpyDevice:
             endpoints = {1: Endpoint()}
+            ieee = "00:11:22:33:44:55:66:77"
+            application = Application()
+            zdo = Zdo()
             power_source = "Unknown"
             type = "Router"
             application_version = 7
@@ -1736,6 +1770,7 @@ class ParserTests(unittest.TestCase):
 
         actions = (
             ConfigureAction("bind", 1, "genOnOff"),
+            ConfigureAction("bind", 1, "genOnOff", destination_endpoint=11),
             ConfigureAction("read", 1, "genOnOff", attributes=("onOff",)),
             ConfigureAction(
                 "configure_reporting",
@@ -1785,6 +1820,7 @@ class ParserTests(unittest.TestCase):
             calls,
             [
                 ("bind",),
+                ("bind_req", "00:11:22:33:44:55:66:77", 1, 0x0006, 11),
                 ("read", ["onOff"]),
                 ("reporting", "onOff", 0, 3600, 0),
                 ("command", "on", {"payloadSize": 1, "expect_reply": False}),

@@ -3306,6 +3306,28 @@ def _is_coordinator_endpoint(value: Any) -> bool:
     return _identifier(value) in {"coordinatorEndpoint", "coordinator", "cordinatorEndpoint"}
 
 
+def _coordinator_destination_endpoint(value: Any) -> tuple[bool, int | None]:
+    """Resolve the coordinator endpoint used as a binding destination."""
+    if _is_coordinator_endpoint(value):
+        return True, None
+    if not isinstance(value, dict) or value.get("__fluent__") is None:
+        return False, None
+    fluent = value["__fluent__"]
+    if not isinstance(fluent, dict) or fluent.get("__call__") != "coordinatorEndpoint.getDevice":
+        return False, None
+    methods = value.get("methods")
+    if not isinstance(methods, list) or len(methods) != 1:
+        return False, None
+    method = methods[0]
+    if not isinstance(method, dict) or method.get("name") != "getEndpoint":
+        return False, None
+    args = method.get("args")
+    endpoint = _static_value(args[0]) if isinstance(args, list) and len(args) == 1 else None
+    if isinstance(endpoint, int) and not isinstance(endpoint, bool) and 1 <= endpoint <= 0xF0:
+        return True, endpoint
+    return False, None
+
+
 def _static_manufacturer_option(value: Any, locals_: dict[str, Any]) -> tuple[bool, int | None]:
     """Resolve the manufacturer option accepted by read/reporting calls."""
     if value is None:
@@ -3869,14 +3891,20 @@ def _configure_actions(
         if call == "reporting.bind":
             clusters = _resolve_config_value(args[2], locals_) if len(args) == 3 else None
             endpoint = _configure_endpoint(args[0], locals_) if len(args) >= 1 else None
-            if endpoint is None or len(args) != 3 or not _is_coordinator_endpoint(args[1]) or not isinstance(clusters, list):
+            destination_valid, destination_endpoint = (
+                _coordinator_destination_endpoint(args[1]) if len(args) >= 2 else (False, None)
+            )
+            if endpoint is None or len(args) != 3 or not destination_valid or not isinstance(clusters, list):
                 unsupported = True
                 continue
             static_clusters = [_static_value(item) for item in clusters]
             if not static_clusters or not all(isinstance(item, (str, int)) for item in static_clusters):
                 unsupported = True
                 continue
-            actions.extend(ConfigureAction("bind", endpoint, cluster) for cluster in static_clusters)
+            actions.extend(
+                ConfigureAction("bind", endpoint, cluster, destination_endpoint=destination_endpoint)
+                for cluster in static_clusters
+            )
             continue
         unsupported = True
     return actions, unsupported

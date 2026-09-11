@@ -952,6 +952,31 @@ def _make_configure_device_class(actions: list[ConfigureAction]) -> type[Any] | 
     return DeclarativeConfigureDevice
 
 
+async def _bind_configure_cluster(
+    source_device: Any,
+    endpoint_id: int | str,
+    cluster: Any,
+    destination_endpoint: int | None,
+) -> None:
+    """Bind a cluster to the coordinator or to a specific coordinator endpoint."""
+    if destination_endpoint is None:
+        await cluster.bind()
+        return
+
+    application = getattr(source_device, "application", None)
+    zdo = getattr(source_device, "zdo", None)
+    source_ieee = getattr(source_device, "ieee", None)
+    get_destination = getattr(application, "get_dst_address", None)
+    bind_request = getattr(zdo, "Bind_req", None)
+    if not callable(get_destination) or not callable(bind_request) or source_ieee is None:
+        _LOGGER.warning("Cannot bind cluster %r to coordinator endpoint %s", cluster, destination_endpoint)
+        return
+
+    destination = get_destination(cluster)
+    destination.endpoint = destination_endpoint
+    await bind_request(source_ieee, endpoint_id, cluster.cluster_id, destination)
+
+
 async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, ...]) -> None:
     """Execute only the static configure operations represented in the IR."""
     zigpy_device = getattr(device, "_zigpy_device", None)
@@ -1000,7 +1025,12 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
             continue
         try:
             if action.operation == "bind":
-                await cluster.bind()
+                await _bind_configure_cluster(
+                    zigpy_device or getattr(endpoint, "device", None),
+                    endpoint_id,
+                    cluster,
+                    action.destination_endpoint,
+                )
             elif action.operation == "read":
                 read_kwargs = (
                     {"manufacturer": action.manufacturer_code}

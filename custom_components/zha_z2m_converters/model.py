@@ -78,6 +78,7 @@ class ConfigureAction:
     options: dict[str, Any] | None = None
     target: str = "coordinator"
     manufacturer_code: int | None = None
+    destination_endpoint: int | None = None
 
 
 @dataclass(frozen=True)
