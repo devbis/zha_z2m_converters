@@ -1087,12 +1087,18 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
                     zigbee_epoch = datetime(2000, 1, 1, tzinfo=timezone.utc)
                     now = datetime.now(timezone.utc)
                     local_offset = now.astimezone().utcoffset()
+                    offset_seconds = int(local_offset.total_seconds()) if local_offset is not None else 0
+                    mode = (action.payload or {}).get("mode")
+                    time_value = round((now - zigbee_epoch).total_seconds())
+                    if mode == "local_time":
+                        time_value += offset_seconds
+                    time_payload = {"time": time_value}
+                    if mode == "with_timezone":
+                        time_payload["timeZone"] = offset_seconds
                     await cluster.write_attributes(
-                        {
-                            "timeStatus": 3,
-                            "time": round((now - zigbee_epoch).total_seconds()),
-                            "timeZone": int(local_offset.total_seconds()) if local_offset is not None else 0,
-                        }
+                        time_payload
+                        if mode in {"local_time", "with_timezone"}
+                        else {"timeStatus": 3, "time": time_value, "timeZone": offset_seconds}
                     )
                 elif action.operation == "save_cluster_attributes":
                     attribute_cache = getattr(cluster, "_attr_cache", None)

@@ -102,7 +102,7 @@ Categories can overlap when one definition has several different gaps.
 |---|---:|
 | Any unsupported configure part | 148 |
 | dynamic syntax or control flow | 140 |
-| unsupported configure call | 44 |
+| unsupported configure call | 42 |
 | unsupported endpoint/device operation | 1 |
 
 ### Configure: dynamic syntax or control flow
@@ -118,20 +118,19 @@ Categories can overlap when one definition has several different gaps.
 |---|---:|
 | `if` | 30 |
 | `utils.sleep` | 3 |
-| `syncTime` | 2 |
-| `lightConfiguration` | 1 |
 | `shutterConfiguration` | 1 |
+| `lightConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `initConfig` | 1 |
 | `logger.debug` | 1 |
+| `initConfig` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
+| `readFd22Attributes` | 1 |
 | `delay` | 1 |
 | `setProductName` | 1 |
 | `readReportingConfiguration` | 1 |
-| `readFd22Attributes` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
 

@@ -4237,6 +4237,21 @@ def _configure_actions(
             if not args_valid:
                 unsupported = True
             continue
+        if call in {"syncTime", "syncTimeWithTimeZone"}:
+            endpoint = _configure_endpoint(args[0], locals_) if len(args) == 1 else None
+            if endpoint is None:
+                unsupported = True
+            else:
+                actions.append(
+                    ConfigureAction(
+                        "write_time",
+                        endpoint,
+                        "genTime",
+                        payload={"mode": "local_time" if call == "syncTime" else "with_timezone"},
+                        target="device",
+                    )
+                )
+            continue
         if call in {"tuya.configureQuery", "tuya.configureBindBasic"}:
             if len(args) == 2 and _identifier(args[0]) == "device" and _is_coordinator_endpoint(args[1]):
                 if call.endswith("configureQuery"):

@@ -2708,6 +2708,29 @@ class ParserTests(unittest.TestCase):
             [(1, "genOta", "output")],
         )
 
+    def test_configure_extracts_sunricher_time_sync_helper(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["SUNRICHER_TIME"],
+            model: "Sunricher time",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await syncTime(endpoint);
+                await syncTimeWithTimeZone(endpoint);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-sunricher-time.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(action.operation, action.payload) for action in device.configure_actions],
+            [
+                ("write_time", {"mode": "local_time"}),
+                ("write_time", {"mode": "with_timezone"}),
+            ],
+        )
+
     def test_configure_extracts_static_device_type_assignment(self) -> None:
         source = """
         export const definitions = [{
