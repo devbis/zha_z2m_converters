@@ -1933,6 +1933,25 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(device.partial)
         self.assertEqual([action.manufacturer_code for action in device.configure_actions], [0x1337, 0x1337])
 
+    def test_configure_resolves_samjin_manufacturer_code(self) -> None:
+        source = """
+        import {Zcl} from "zigbee-herdsman";
+        export const definitions = [{
+            zigbeeModel: ["SAMJIN_MANUFACTURER"],
+            model: "SAMJIN_MANUFACTURER",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await endpoint.read("customCluster", ["status"], {
+                    manufacturerCode: Zcl.ManufacturerCode.SAMJIN_CO_LTD,
+                });
+            },
+        }];
+        """
+        device = parse_source(source, "configure-samjin-manufacturer.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.configure_actions[0].manufacturer_code, 0x1241)
+
     def test_configure_supports_literal_writes(self) -> None:
         source = """
         const options = {manufacturerCode: 0x115f};
