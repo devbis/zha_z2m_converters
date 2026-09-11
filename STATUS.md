@@ -135,8 +135,8 @@ Categories can overlap when one definition has several different gaps.
 | `ensureNyceIasEnrollment` | 1 |
 | `delay` | 1 |
 | `setProductName` | 1 |
-| `readReportingConfiguration` | 1 |
 | `readFd22Attributes` | 1 |
+| `readReportingConfiguration` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
 
@@ -156,9 +156,9 @@ Categories can overlap when one definition has several different gaps.
 
 | Item | Definitions |
 |---|---:|
-| `reporting.temperature` | 1 |
-| `reporting.humidity` | 1 |
 | `reporting.bind` | 1 |
+| `reporting.humidity` | 1 |
+| `reporting.temperature` | 1 |
 
 ### Configure: unsupported endpoint/device operation
 
