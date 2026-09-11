@@ -15,6 +15,7 @@ from .parser import (
     _configure_actions,
     _find_assignments,
     _find_static_constants,
+    _find_static_configure_functions,
     _string,
     parse_path,
 )
@@ -115,7 +116,17 @@ def _iter_configure_problems(source: Path, result: Any):
     for source_file in load_sources(source):
         tokens = tokenize(source_file.text)
         constants = _find_static_constants(tokens)
-        for token, assigned in _find_assignments(tokens, {"definitions", "definition"}, constants):
+        assignments = _find_assignments(tokens, {"definitions", "definition"}, constants)
+        configure_names = {
+            str(raw["configure"]["__identifier__"])
+            for _token, assigned in assignments
+            for raw in (assigned if isinstance(assigned, list) else [assigned])
+            if isinstance(raw, dict)
+            and isinstance(raw.get("configure"), dict)
+            and set(raw["configure"]) == {"__identifier__"}
+        }
+        configure_functions = _find_static_configure_functions(tokens, configure_names, constants)
+        for token, assigned in assignments:
             raw_definitions = assigned if isinstance(assigned, list) else [assigned]
             for raw in raw_definitions:
                 if not isinstance(raw, dict):
@@ -123,6 +134,8 @@ def _iter_configure_problems(source: Path, result: Any):
                 configure = raw.get("configure")
                 if configure is None:
                     continue
+                if isinstance(configure, dict) and set(configure) == {"__identifier__"}:
+                    configure = configure_functions.get(str(configure["__identifier__"]), configure)
                 vendor, model = _raw_definition_identity(raw)
                 key = (source_file.filename, vendor, model)
                 if not parsed_keys[key]:

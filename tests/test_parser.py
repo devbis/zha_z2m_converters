@@ -1629,6 +1629,30 @@ class ParserTests(unittest.TestCase):
         plan = build_runtime_plan(device)
         self.assertEqual(plan.configure_actions, device.configure_actions)
 
+    def test_named_configure_function_is_parsed_as_static_callback(self) -> None:
+        source = """
+        async function configureExample(device, coordinatorEndpoint) {
+            const endpoint = device.getEndpoint(1);
+            await endpoint.bind(coordinatorEndpoint, "genOnOff");
+            await endpoint.read("genBasic", ["modelId"]);
+        }
+        export const definitions = [{
+            zigbeeModel: ["NAMED_CONFIGURE"],
+            model: "Named configure",
+            vendor: "Example",
+            configure: configureExample,
+        }];
+        """
+        device = parse_source(source, "configure-named-function.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [
+                ConfigureAction("bind", 1, "genOnOff"),
+                ConfigureAction("read", 1, "genBasic", attributes=("modelId",), target="device"),
+            ],
+        )
+
     def test_configure_extracts_coordinator_endpoint_bind(self) -> None:
         source = """
         export const definitions = [{

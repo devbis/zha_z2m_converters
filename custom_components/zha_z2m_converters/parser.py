@@ -77,6 +77,7 @@ class _ObjectParser:
     tokens: list[Token]
     index: int = 0
     constants: dict[str, Any] | None = None
+    configure_locals: dict[str, Any] | None = None
 
     def current(self) -> Token:
         if self.index >= len(self.tokens):
@@ -542,6 +543,7 @@ class _ObjectParser:
         if self.current().value != "}":
             raise UnsupportedSyntax("unclosed configure callback")
         self.take("}")
+        self.configure_locals = locals_
         value: dict[str, Any] = {"__configure__": statements, "__locals__": locals_}
         if unsupported:
             value["__unsupported__"] = "configure"
@@ -649,7 +651,9 @@ class _ObjectParser:
                 self.skip_to_configure_boundary(statement_start)
                 if self.current().value == ";":
                     self.take()
+        self.configure_locals = locals_
         return statements, unsupported
+
 
     def parse_static_configure_try(self) -> tuple[list[Any], bool]:
         """Extract static configure calls from a try block without executing it."""
@@ -803,6 +807,61 @@ class _ObjectParser:
                 depth -= 1
         if depth:
             raise UnsupportedSyntax("unclosed expression")
+
+
+def _matching_delimiter(tokens: list[Token], start: int) -> int | None:
+    """Find the matching closing delimiter for a parenthesized expression."""
+    opening = tokens[start].value
+    closing = {"(": ")", "[": "]", "{": "}"}.get(opening)
+    if closing is None:
+        return None
+    depth = 0
+    for index in range(start, len(tokens)):
+        if tokens[index].value == opening:
+            depth += 1
+        elif tokens[index].value == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _find_static_configure_functions(
+    tokens: list[Token],
+    names: set[str],
+    constants: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Parse named configure functions into the same safe callback representation."""
+    functions: dict[str, dict[str, Any]] = {}
+    if not names:
+        return functions
+    for index, token in enumerate(tokens):
+        if token.value != "function" or index + 3 >= len(tokens):
+            continue
+        name = tokens[index + 1]
+        if name.kind != "identifier" or name.value not in names or tokens[index + 2].value != "(":
+            continue
+        parameters_end = _matching_delimiter(tokens, index + 2)
+        if parameters_end is None:
+            continue
+        body_start = parameters_end + 1
+        while body_start < len(tokens) and tokens[body_start].value != "{":
+            body_start += 1
+        if body_start >= len(tokens):
+            continue
+        body_end = _matching_delimiter(tokens, body_start)
+        if body_end is None:
+            continue
+        parser = _ObjectParser(tokens[body_start + 1 : body_end], constants={**constants})
+        statements, unsupported = parser.parse_configure_statements()
+        value: dict[str, Any] = {
+            "__configure__": statements,
+            "__locals__": parser.configure_locals or {},
+        }
+        if unsupported:
+            value["__unsupported__"] = "configure"
+        functions[name.value] = value
+    return functions
 
 
 def _decode_string(value: str) -> str:
@@ -4245,6 +4304,15 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
     if not assignments:
         result.diagnostics.append(Diagnostic("warning", "no-definitions", "no static definitions assignment found", filename))
         return result
+    configure_names = {
+        str(raw["configure"]["__identifier__"])
+        for _token, assigned in assignments
+        for raw in (assigned if isinstance(assigned, list) else [assigned])
+        if isinstance(raw, dict)
+        and isinstance(raw.get("configure"), dict)
+        and set(raw["configure"]) == {"__identifier__"}
+    }
+    configure_functions = _find_static_configure_functions(tokens, configure_names, constants)
     for token, value in assignments:
         values = value if isinstance(value, list) else [value]
         if value is None:
@@ -4298,6 +4366,14 @@ def parse_source(text: str, filename: str = "<memory>") -> ParseResult:
                     ),
                 )
                 continue
+            configure = raw.get("configure")
+            configure_name = (
+                str(configure["__identifier__"])
+                if isinstance(configure, dict) and set(configure) == {"__identifier__"}
+                else None
+            )
+            if configure_name in configure_functions:
+                raw = {**raw, "configure": configure_functions[configure_name]}
             device = _device(raw, token, filename, result.diagnostics, constants)
             if device:
                 result.devices.append(device)
