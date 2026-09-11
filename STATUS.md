@@ -102,10 +102,10 @@ Categories can overlap when one definition has several different gaps.
 |---|---:|
 | Any unsupported configure part | 195 |
 | dynamic syntax or control flow | 130 |
-| unsupported configure call | 50 |
+| unsupported configure call | 53 |
 | direct or unsupported configure expression | 45 |
-| unsupported endpoint operation arguments | 7 |
-| unsupported reporting arguments | 2 |
+| unsupported endpoint operation arguments | 5 |
+| unsupported reporting arguments | 1 |
 | unsupported endpoint/device operation | 1 |
 
 ### Configure: dynamic syntax or control flow
@@ -119,13 +119,13 @@ Categories can overlap when one definition has several different gaps.
 
 | Item | Definitions |
 |---|---:|
-| `if` | 27 |
+| `if` | 30 |
 | `m.setupAttributes` | 5 |
 | `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
 | `syncTime` | 2 |
-| `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
+| `shutterConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
 | `logger.debug` | 1 |
 | `initConfig` | 1 |
@@ -133,10 +133,10 @@ Categories can overlap when one definition has several different gaps.
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
-| `readFd22Attributes` | 1 |
-| `setProductName` | 1 |
-| `delay` | 1 |
 | `readReportingConfiguration` | 1 |
+| `delay` | 1 |
+| `setProductName` | 1 |
+| `readFd22Attributes` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
 
@@ -146,18 +146,8 @@ Categories can overlap when one definition has several different gaps.
 |---|---:|
 | `endpoint.write` | 2 |
 | `endpoint.bind` | 2 |
-| `endpoint.command` | 1 |
-| `mainController.read` | 1 |
-| `ep1.bind` | 1 |
 | `ep2.bind` | 1 |
-
-### Configure: unsupported reporting arguments
-
-| Item | Definitions |
-|---|---:|
-| `reporting.bind` | 2 |
-| `reporting.humidity` | 1 |
-| `reporting.temperature` | 1 |
+| `ep1.bind` | 1 |
 
 ### Configure: direct or unsupported configure expression
 
@@ -167,6 +157,14 @@ Categories can overlap when one definition has several different gaps.
 | `configureCommon` | 13 |
 | `<unknown>` | 1 |
 | `configureAqaraH2EuShutterSwitch` | 1 |
+
+### Configure: unsupported reporting arguments
+
+| Item | Definitions |
+|---|---:|
+| `reporting.bind` | 1 |
+| `reporting.humidity` | 1 |
+| `reporting.temperature` | 1 |
 
 ### Configure: unsupported endpoint/device operation
 

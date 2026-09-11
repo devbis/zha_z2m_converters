@@ -1674,6 +1674,48 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_static_configure_command_supports_buffer_from(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["BUFFER_COMMAND"],
+            model: "Buffer command",
+            vendor: "Example",
+            configure: async (device) => {
+                await device.getEndpoint(1).command(
+                    "boschSpecific",
+                    "pairingCompleted",
+                    {data: Buffer.from([0x00, 0x7f])},
+                );
+            },
+        }];
+        """
+        device = parse_source(source, "configure-buffer-command.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.configure_actions[0].payload, {"data": bytes([0x00, 0x7F])})
+
+    def test_unsupported_configure_loop_does_not_hide_following_static_statement(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["LOOP_RECOVERY"],
+            model: "Loop recovery",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                for (let i = 1; i <= 2; i++) {
+                    const endpoint = device.getEndpoint(i);
+                    if (endpoint) await endpoint.bind(coordinatorEndpoint, "genOnOff");
+                }
+                const mainController = device.getEndpoint(232);
+                await mainController.read("genBasic", ["modelId"]);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-loop-recovery.ts").devices[0]
+        self.assertTrue(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [ConfigureAction("read", 232, "genBasic", attributes=("modelId",), target="device")],
+        )
+
     def test_static_configure_command_options_are_extracted(self) -> None:
         source = """
         export const definitions = [{

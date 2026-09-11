@@ -494,7 +494,7 @@ class _ObjectParser:
                     unsupported = unsupported or try_unsupported
                 except UnsupportedSyntax:
                     unsupported = True
-                    self.skip_to_object_boundary(statement_start, boundaries=(";", "}"))
+                    self.skip_to_configure_boundary(statement_start)
                 continue
             if self.current().value == "for":
                 loop_start = self.index
@@ -504,7 +504,7 @@ class _ObjectParser:
                     unsupported = unsupported or loop_unsupported
                 except UnsupportedSyntax:
                     unsupported = True
-                    self.skip_to_object_boundary(loop_start, boundaries=(";", "}"))
+                    self.skip_to_configure_boundary(loop_start)
                 continue
             statement_start = self.index
             try:
@@ -536,7 +536,7 @@ class _ObjectParser:
                     raise UnsupportedSyntax("configure statement must end with a semicolon")
             except UnsupportedSyntax:
                 unsupported = True
-                self.skip_to_object_boundary(statement_start, boundaries=(";", "}"))
+                self.skip_to_configure_boundary(statement_start)
                 if self.current().value == ";":
                     self.take()
         if self.current().value != "}":
@@ -604,7 +604,7 @@ class _ObjectParser:
                     unsupported = unsupported or try_unsupported
                 except UnsupportedSyntax:
                     unsupported = True
-                    self.skip_to_object_boundary(statement_start, boundaries=(";",))
+                    self.skip_to_configure_boundary(statement_start)
                 continue
             if self.current().value == "for":
                 loop_start = self.index
@@ -614,7 +614,7 @@ class _ObjectParser:
                     unsupported = unsupported or loop_unsupported
                 except UnsupportedSyntax:
                     unsupported = True
-                    self.skip_to_object_boundary(loop_start, boundaries=(";",))
+                    self.skip_to_configure_boundary(loop_start)
                 continue
             statement_start = self.index
             try:
@@ -646,7 +646,7 @@ class _ObjectParser:
                     raise UnsupportedSyntax("configure statement must end with a semicolon")
             except UnsupportedSyntax:
                 unsupported = True
-                self.skip_to_object_boundary(statement_start, boundaries=(";",))
+                self.skip_to_configure_boundary(statement_start)
                 if self.current().value == ";":
                     self.take()
         return statements, unsupported
@@ -735,6 +735,37 @@ class _ObjectParser:
                 elif value in boundaries:
                     return
             self.take()
+
+    def skip_to_configure_boundary(self, start: int) -> None:
+        """Skip one unsupported configure statement without losing following statements."""
+        self.index = start
+        if self.current().value not in {"for", "if", "try", "switch", "while"}:
+            self.skip_to_object_boundary(start, boundaries=(";", "}"))
+            return
+
+        stack: list[str] = []
+        pairs = {
+            ")": "(",
+            "]": "[",
+            "}": "{",
+        }
+        saw_block = False
+        while self.current().kind != "eof":
+            token = self.take()
+            if token.value in ("(", "[", "{"):
+                stack.append(token.value)
+                saw_block = saw_block or token.value == "{"
+            elif token.value in pairs:
+                if stack and stack[-1] == pairs[token.value]:
+                    stack.pop()
+                    if token.value == "}" and saw_block and not stack:
+                        if self.current().value in {"else", "catch", "finally"}:
+                            continue
+                        return
+                elif token.value == "}" and not stack:
+                    return
+            elif token.value == ";" and not stack:
+                return
 
     def skip_to_array_boundary(self, start: int) -> None:
         """Skip one unsupported array item without crossing its enclosing array."""
@@ -1228,6 +1259,24 @@ def _static_value(value: Any) -> str | int | float | None:
     if isinstance(value, dict) and isinstance(value.get("ID"), dict):
         return _static_text(value["ID"])
     return None
+
+
+def _static_command_value(value: Any) -> Any:
+    """Resolve literal command payload values, including static byte arrays."""
+    if value is None or isinstance(value, (str, int, float, bool, bytes)):
+        return value
+    if not isinstance(value, dict) or value.get("__call__") != "Buffer.from":
+        return _MISSING
+    args = value.get("args")
+    if not isinstance(args, list) or len(args) != 1 or not isinstance(args[0], list):
+        return _MISSING
+    byte_values: list[int] = []
+    for item in args[0]:
+        byte_value = _static_value(item)
+        if not isinstance(byte_value, int) or isinstance(byte_value, bool) or not 0 <= byte_value <= 0xFF:
+            return _MISSING
+        byte_values.append(byte_value)
+    return bytes(byte_values)
 
 
 def _static_cluster_id(value: Any) -> int | None:
@@ -3429,11 +3478,16 @@ def _configure_command_action(
         or (options is not None and not isinstance(options, dict))
     ):
         return None
-    if any(_static_value(value) is None and value is not None for value in payload.values()):
-        return None
+    static_payload: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(value, dict) and "value" in value:
+            value = value["value"]
+        static_value = _static_command_value(value)
+        if static_value is _MISSING:
+            return None
+        static_payload[str(key)] = static_value
     if options is not None and any(_static_value(value) is None and value is not None for value in options.values()):
         return None
-    static_payload = {str(key): _static_value(value) for key, value in payload.items()}
     static_options = None if options is None else {str(key): _static_value(value) for key, value in options.items()}
     return ConfigureAction(
         "command",
