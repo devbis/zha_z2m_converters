@@ -21,9 +21,9 @@ the safe declarative translation to ZHA.
 |---|---:|
 | unsupported converter binding | 836 |
 | unsupported extend macro | 604 |
-| dynamic expose or other expression | 315 |
+| dynamic expose or other expression | 316 |
 | no usable data path | 263 |
-| unsupported definition field | 63 |
+| unsupported definition field | 62 |
 
 ### Unsupported extend macros
 
@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 157 |
+| `configure` | 152 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -100,9 +100,9 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 157 |
+| Any unsupported configure part | 152 |
 | dynamic syntax or control flow | 140 |
-| unsupported configure call | 53 |
+| unsupported configure call | 48 |
 | unsupported endpoint/device operation | 1 |
 
 ### Configure: dynamic syntax or control flow
@@ -117,23 +117,22 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `if` | 30 |
-| `m.setupAttributes` | 5 |
 | `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
 | `syncTime` | 2 |
 | `lightConfiguration` | 1 |
 | `shutterConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `logger.debug` | 1 |
 | `initConfig` | 1 |
+| `logger.debug` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
+| `readFd22Attributes` | 1 |
 | `delay` | 1 |
 | `setProductName` | 1 |
 | `readReportingConfiguration` | 1 |
-| `readFd22Attributes` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
 

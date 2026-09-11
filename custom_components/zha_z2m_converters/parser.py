@@ -3882,6 +3882,78 @@ _HEIMAN_REPORTING_HELPERS: dict[str, tuple[str, str]] = {
     "aqiMeasuredValue": ("heimanSpecificAirQuality", "aqiMeasuredValue"),
 }
 
+_SETUP_ATTRIBUTES_TIME: dict[str, int] = {
+    "MIN": 0,
+    "MAX": 65000,
+    "1_SECOND": 1,
+    "5_SECONDS": 5,
+    "10_SECONDS": 10,
+    "1_MINUTE": 60,
+    "2_MINUTES": 120,
+    "5_MINUTES": 300,
+    "30_MINUTES": 1800,
+    "1_HOUR": 3600,
+    "4_HOURS": 14400,
+}
+
+
+def _setup_attributes_actions(args: list[Any], locals_: dict[str, Any]) -> list[ConfigureAction] | None:
+    """Expand the literal m.setupAttributes helper into ordinary actions."""
+    if len(args) not in {4, 5, 6}:
+        return None
+    entity, cluster_value = args[0], _static_value(args[2])
+    config = _resolve_config_value(args[3], locals_)
+    if not isinstance(cluster_value, (str, int)) or not isinstance(config, list) or not config:
+        return None
+    if _identifier(entity) == "device":
+        endpoint: str | int = f"__all_with_input_cluster:{cluster_value}"
+    else:
+        endpoint = _configure_endpoint(entity, locals_)
+        if endpoint is None:
+            return None
+    configure_reporting = args[4] if len(args) >= 5 else True
+    read = args[5] if len(args) == 6 else True
+    if not isinstance(configure_reporting, bool) or not isinstance(read, bool):
+        return None
+
+    actions: list[ConfigureAction] = []
+    if configure_reporting:
+        actions.append(ConfigureAction("bind", endpoint, cluster_value))
+    for item in config:
+        if not isinstance(item, dict):
+            return None
+        attribute = _static_value(item.get("attribute"))
+        minimum = _static_value(item.get("min"))
+        maximum = _static_value(item.get("max"))
+        change = _static_value(item.get("change"))
+        if isinstance(minimum, str):
+            minimum = _SETUP_ATTRIBUTES_TIME.get(minimum)
+        if isinstance(maximum, str):
+            maximum = _SETUP_ATTRIBUTES_TIME.get(maximum)
+        if (
+            not isinstance(attribute, (str, int))
+            or not isinstance(minimum, (int, float))
+            or not isinstance(maximum, (int, float))
+            or not isinstance(change, (int, float))
+        ):
+            return None
+        if configure_reporting:
+            actions.append(
+                ConfigureAction(
+                    "configure_reporting",
+                    endpoint,
+                    cluster_value,
+                    attributes=(attribute,),
+                    minimum_interval=minimum,
+                    maximum_interval=maximum,
+                    reportable_change=change,
+                    target="device",
+                )
+            )
+        if read:
+            actions.append(ConfigureAction("read", endpoint, cluster_value, attributes=(attribute,), target="device"))
+    return actions
+
 
 def _reporting_helper_actions(call: str | None, args: list[Any], locals_: dict[str, Any]) -> list[ConfigureAction] | None:
     if not call or not call.startswith("reporting."):
@@ -4130,6 +4202,13 @@ def _configure_actions(
             continue
         call = _call_name(statement)
         args = statement.get("args", [])
+        if call and call.rsplit(".", 1)[-1] == "setupAttributes":
+            setup_actions = _setup_attributes_actions(args, locals_)
+            if setup_actions is not None:
+                actions.extend(setup_actions)
+            else:
+                unsupported = True
+            continue
         if call in {"tuya.configureQuery", "tuya.configureBindBasic"}:
             if len(args) == 2 and _identifier(args[0]) == "device" and _is_coordinator_endpoint(args[1]):
                 if call.endswith("configureQuery"):

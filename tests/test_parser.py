@@ -2664,6 +2664,30 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(calls, [(3, ["measuredValue"])])
 
+    def test_configure_expands_setup_attributes_helper(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["SETUP_ATTRIBUTES"],
+            model: "Setup attributes",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                await m.setupAttributes(device, coordinatorEndpoint, "genOnOff", [
+                    {attribute: "onOff", min: "MIN", max: "MAX", change: 1},
+                ]);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-setup-attributes.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(action.operation, action.endpoint, action.cluster, action.attributes, action.minimum_interval, action.maximum_interval) for action in device.configure_actions],
+            [
+                ("bind", "__all_with_input_cluster:genOnOff", "genOnOff", (), None, None),
+                ("configure_reporting", "__all_with_input_cluster:genOnOff", "genOnOff", ("onOff",), 0, 65000),
+                ("read", "__all_with_input_cluster:genOnOff", "genOnOff", ("onOff",), None, None),
+            ],
+        )
+
     def test_configure_extracts_static_device_type_assignment(self) -> None:
         source = """
         export const definitions = [{
