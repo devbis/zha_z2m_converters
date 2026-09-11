@@ -384,6 +384,27 @@ class _ObjectParser:
             locals_[local_name] = value[source_name]
             self.constants[local_name] = value[source_name]
 
+    def looks_like_static_device_assignment(self) -> bool:
+        """Recognize a device metadata assignment without evaluating it."""
+        return (
+            self.current().value == "device"
+            and self.index + 3 < len(self.tokens)
+            and self.tokens[self.index + 1].value == "."
+            and self.tokens[self.index + 2].value in {"powerSource"}
+            and self.tokens[self.index + 3].value == "="
+        )
+
+    def parse_static_device_assignment(self) -> dict[str, Any]:
+        """Parse a supported literal device metadata assignment."""
+        self.take("device")
+        self.take(".")
+        property_name = self.take().value
+        self.take("=")
+        value = self.parse_value()
+        if not isinstance(value, str):
+            raise UnsupportedSyntax("device metadata assignment must use a string literal")
+        return {"__set_device_property__": {"name": property_name, "value": value}}
+
     def parse_configure(self) -> Any:
         """Parse a callback shell while retaining only its static call expressions."""
         if self.current().value == "async":
@@ -424,7 +445,9 @@ class _ObjectParser:
                 continue
             statement_start = self.index
             try:
-                if self.current().value in {"const", "let", "var"}:
+                if self.looks_like_static_device_assignment():
+                    statements.append(self.parse_static_device_assignment())
+                elif self.current().value in {"const", "let", "var"}:
                     self.take()
                     if self.current().value == "{":
                         self.parse_static_destructuring(locals_)
@@ -530,7 +553,9 @@ class _ObjectParser:
                 continue
             statement_start = self.index
             try:
-                if self.current().value in {"const", "let", "var"}:
+                if self.looks_like_static_device_assignment():
+                    statements.append(self.parse_static_device_assignment())
+                elif self.current().value in {"const", "let", "var"}:
                     self.take()
                     if self.current().value == "{":
                         self.parse_static_destructuring(locals_)
@@ -3510,6 +3535,23 @@ def _configure_actions(
         if not isinstance(statement, dict):
             unsupported = True
             continue
+        if "__set_device_property__" in statement:
+            property_value = statement["__set_device_property__"]
+            if (
+                isinstance(property_value, dict)
+                and property_value.get("name") == "powerSource"
+                and isinstance(property_value.get("value"), str)
+            ):
+                actions.append(
+                    ConfigureAction(
+                        "set_device_property",
+                        payload={"name": "powerSource", "value": property_value["value"]},
+                        target="device",
+                    )
+                )
+            else:
+                unsupported = True
+            continue
         if "__fluent__" in statement:
             base = statement["__fluent__"]
             endpoint = _configure_endpoint(base, locals_)
@@ -3718,6 +3760,35 @@ def _configure_actions(
         heiman_action = _heiman_reporting_helper_actions(call, args, locals_)
         if heiman_action is not None:
             actions.append(heiman_action)
+            continue
+        if call == "device.save" and not args:
+            # zigbee-herdsman persists its in-memory device cache here. ZHA
+            # keeps the equivalent cluster cache on the live device, so there
+            # is no separate wire operation to execute.
+            continue
+        if call and call.rsplit(".", 1)[-1] == "saveClusterAttributeKeyValue":
+            receiver = {"__identifier__": call.rsplit(".", 1)[0]}
+            endpoint = _configure_endpoint(receiver, locals_)
+            payload = _resolve_config_value(args[1], locals_) if len(args) == 2 else None
+            cluster = _static_value(args[0]) if args else None
+            if (
+                endpoint is not None
+                and isinstance(cluster, (str, int))
+                and isinstance(payload, dict)
+                and all(isinstance(key, (str, int)) for key in payload)
+                and all(_static_value(value) is not None or value is None for value in payload.values())
+            ):
+                actions.append(
+                    ConfigureAction(
+                        "save_cluster_attributes",
+                        endpoint,
+                        cluster,
+                        payload={str(key): _static_value(value) for key, value in payload.items()},
+                        target="device",
+                    )
+                )
+                continue
+            unsupported = True
             continue
         if call == "reporting.bind":
             clusters = _resolve_config_value(args[2], locals_) if len(args) == 3 else None

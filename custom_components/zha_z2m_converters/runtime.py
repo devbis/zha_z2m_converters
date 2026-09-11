@@ -957,6 +957,18 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
     zigpy_device = getattr(device, "_zigpy_device", None)
     endpoints = getattr(zigpy_device, "endpoints", {})
     for action in actions:
+        if action.operation == "set_device_property":
+            property_name = (action.payload or {}).get("name")
+            property_value = (action.payload or {}).get("value")
+            if property_name == "powerSource":
+                target = zigpy_device or device
+                for attribute_name in ("power_source", "powerSource"):
+                    if hasattr(target, attribute_name):
+                        setattr(target, attribute_name, property_value)
+                node_descriptor = getattr(target, "node_desc", None)
+                if node_descriptor is not None and hasattr(node_descriptor, "power_source"):
+                    setattr(node_descriptor, "power_source", property_value)
+            continue
         endpoint_id, endpoint = _resolve_configure_endpoint(endpoints, action.endpoint)
         if endpoint is None:
             _LOGGER.warning("Configure endpoint %s is not present", endpoint_id)
@@ -998,6 +1010,12 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
                     else {}
                 )
                 await cluster.write_attributes(action.payload or {}, **write_kwargs)
+            elif action.operation == "save_cluster_attributes":
+                attribute_cache = getattr(cluster, "_attr_cache", None)
+                if not isinstance(attribute_cache, dict):
+                    _LOGGER.warning("Cluster %r has no attribute cache", action.cluster)
+                    continue
+                attribute_cache.update(action.payload or {})
             elif action.operation == "command":
                 await cluster.command(action.command, **(action.payload or {}))
             else:

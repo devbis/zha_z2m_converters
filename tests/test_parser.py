@@ -1660,6 +1660,9 @@ class ParserTests(unittest.TestCase):
         class Cluster:
             cluster_id = 0x0006
 
+            def __init__(self):
+                self._attr_cache = {}
+
             async def bind(self):
                 calls.append(("bind",))
 
@@ -1681,6 +1684,7 @@ class ParserTests(unittest.TestCase):
 
         class ZigpyDevice:
             endpoints = {1: Endpoint()}
+            power_source = "Unknown"
 
         class Device:
             _zigpy_device = ZigpyDevice()
@@ -1699,6 +1703,12 @@ class ParserTests(unittest.TestCase):
             ),
             ConfigureAction("command", 1, "genOnOff", command="on", payload={"payloadSize": 1}),
             ConfigureAction("write", 1, "genOnOff", payload={"onOff": 1}),
+            ConfigureAction("save_cluster_attributes", 1, "genOnOff", payload={"onTime": 10}),
+            ConfigureAction(
+                "set_device_property",
+                payload={"name": "powerSource", "value": "Battery"},
+                target="device",
+            ),
         )
         asyncio.run(_apply_configure_actions(Device(), actions))
         self.assertEqual(
@@ -1711,6 +1721,8 @@ class ParserTests(unittest.TestCase):
                 ("write", {"onOff": 1}, {}),
             ],
         )
+        self.assertEqual(Endpoint.in_clusters[0x0006]._attr_cache, {"onTime": 10})
+        self.assertEqual(Device._zigpy_device.power_source, "Battery")
 
     def test_static_configure_actions_pass_manufacturer_code(self) -> None:
         calls = []
@@ -2141,6 +2153,59 @@ class ParserTests(unittest.TestCase):
                 reportable_change=1,
                 target="device",
             ),
+        )
+
+    def test_configure_extracts_static_cluster_attribute_cache(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["CACHE_ATTRIBUTES"],
+            model: "Cached attributes",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                endpoint.saveClusterAttributeKeyValue("seMetering", {divisor: 100, multiplier: 1});
+                device.save();
+            },
+        }];
+        """
+        device = parse_source(source, "configure-cache-attributes.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [
+                ConfigureAction(
+                    "save_cluster_attributes",
+                    1,
+                    "seMetering",
+                    payload={"divisor": 100, "multiplier": 1},
+                    target="device",
+                )
+            ],
+        )
+
+    def test_configure_extracts_static_power_source_assignment(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["POWER_SOURCE"],
+            model: "Power source",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                device.powerSource = "Mains (single phase)";
+                device.save();
+            },
+        }];
+        """
+        device = parse_source(source, "configure-power-source.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [
+                ConfigureAction(
+                    "set_device_property",
+                    payload={"name": "powerSource", "value": "Mains (single phase)"},
+                    target="device",
+                )
+            ],
         )
 
     def test_custom_electricity_converter_keeps_device_partial(self) -> None:

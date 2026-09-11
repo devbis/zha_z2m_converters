@@ -8,8 +8,8 @@ the safe declarative translation to ZHA.
 
 | Status | Definitions | Share |
 |---|---:|---:|
-| Fully supported | 2,584 | 57.7% |
-| Usable partial | 1,617 | 36.1% |
+| Fully supported | 2,627 | 58.7% |
+| Usable partial | 1,574 | 35.1% |
 | Metadata only | 11 | 0.2% |
 | Unusable partial | 263 | 5.9% |
 | Rejected | 3 | 0.1% |
@@ -21,9 +21,9 @@ the safe declarative translation to ZHA.
 |---|---:|
 | unsupported converter binding | 836 |
 | unsupported extend macro | 604 |
-| dynamic expose or other expression | 306 |
+| dynamic expose or other expression | 314 |
 | no usable data path | 263 |
-| unsupported definition field | 134 |
+| unsupported definition field | 83 |
 
 ### Unsupported extend macros
 
@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 291 |
+| `configure` | 210 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -101,12 +101,12 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 291 |
-| dynamic syntax or control flow | 189 |
-| unsupported endpoint/device operation | 108 |
+| Any unsupported configure part | 210 |
+| dynamic syntax or control flow | 139 |
 | unsupported configure call | 50 |
 | direct or unsupported configure expression | 45 |
 | unsupported endpoint operation arguments | 11 |
+| unsupported endpoint/device operation | 9 |
 | unsupported reporting arguments | 4 |
 | unsupported reporting helper | 3 |
 
@@ -114,21 +114,8 @@ Categories can overlap when one definition has several different gaps.
 
 | Item | Definitions |
 |---|---:|
-| `<parser-marked>` | 179 |
+| `<parser-marked>` | 129 |
 | `<unknown>` | 10 |
-
-### Configure: unsupported endpoint/device operation
-
-| Item | Definitions |
-|---|---:|
-| `device.save` | 92 |
-| `device.powerSource` | 62 |
-| `endpoint.saveClusterAttributeKeyValue` | 32 |
-| `endpoint1.saveClusterAttributeKeyValue` | 5 |
-| `device.type` | 3 |
-| `device.softwareBuildID` | 2 |
-| `endpoint.save` | 1 |
-| `endpoint2.saveClusterAttributeKeyValue` | 1 |
 
 ### Configure: unsupported configure call
 
@@ -148,10 +135,10 @@ Categories can overlap when one definition has several different gaps.
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
-| `setProductName` | 1 |
 | `delay` | 1 |
 | `readReportingConfiguration` | 1 |
 | `readFd22Attributes` | 1 |
+| `setProductName` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
 
@@ -190,6 +177,15 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `reporting.payload` | 3 |
+
+### Configure: unsupported endpoint/device operation
+
+| Item | Definitions |
+|---|---:|
+| `endpoint.saveClusterAttributeKeyValue` | 3 |
+| `device.type` | 3 |
+| `device.softwareBuildID` | 2 |
+| `endpoint.save` | 1 |
 
 ## Rejected definitions
 
