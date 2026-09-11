@@ -989,6 +989,8 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
     zigpy_device = getattr(device, "_zigpy_device", None)
     endpoints = getattr(zigpy_device, "endpoints", {})
     for action in actions:
+        if action.condition and not _configure_condition_matches(zigpy_device or device, action.condition):
+            continue
         if action.operation == "set_device_property":
             property_name = (action.payload or {}).get("name")
             property_value = (action.payload or {}).get("value")
@@ -1122,6 +1124,25 @@ def _resolve_configure_endpoint(endpoints: Any, endpoint: str | int | None) -> t
         return endpoint, available[index] if 0 <= index < len(available) else None
     endpoint_id = endpoint if endpoint is not None else 1
     return endpoint_id, endpoints.get(endpoint_id)
+
+
+def _configure_condition_matches(device: Any, condition: dict[str, Any]) -> bool:
+    """Evaluate the small declarative device condition used by configure actions."""
+    if condition.get("property") != "modelID":
+        return False
+    model = next(
+        (
+            getattr(device, attribute_name)
+            for attribute_name in ("model", "model_id", "modelID")
+            if hasattr(device, attribute_name)
+        ),
+        None,
+    )
+    if "equals" in condition:
+        return model == condition["equals"]
+    if "not_equals" in condition:
+        return model != condition["not_equals"]
+    return False
 
 
 def _resolve_configure_endpoints(

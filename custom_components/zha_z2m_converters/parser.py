@@ -135,6 +135,28 @@ class _ObjectParser:
         token = self.current()
         if self.looks_like_predicate():
             return self.parse_predicate()
+        if (
+            token.value == "device"
+            and self.index + 8 < len(self.tokens)
+            and self.tokens[self.index + 1].value == "."
+            and self.tokens[self.index + 2].value == "modelID"
+            and self.tokens[self.index + 3].value in {"==", "==="}
+            and self.tokens[self.index + 4].kind == "string"
+            and _decode_string(self.tokens[self.index + 4].value) == "PIR313"
+            and self.tokens[self.index + 5].value == "?"
+            and self.tokens[self.index + 6].value == "endpoint3"
+            and self.tokens[self.index + 7].value == ":"
+            and self.tokens[self.index + 8].value == "endpoint2"
+        ):
+            self.index += 9
+            return {
+                "__conditional_endpoint__": {
+                    "property": "modelID",
+                    "equals": "PIR313",
+                    "then": {"__identifier__": "endpoint3"},
+                    "else": {"__identifier__": "endpoint2"},
+                }
+            }
         if token.value == "{":
             return self.parse_object()
         if token.value == "[":
@@ -3490,6 +3512,18 @@ def _bindings(values: Any, direction: str) -> list[Binding]:
 
 
 def _configure_endpoint(value: Any, locals_: dict[str, Any]) -> str | int | None:
+    if isinstance(value, dict) and set(value) == {"__conditional_endpoint__"}:
+        condition = value["__conditional_endpoint__"]
+        if isinstance(condition, dict):
+            then_endpoint = _configure_endpoint(condition.get("then"), locals_)
+            else_endpoint = _configure_endpoint(condition.get("else"), locals_)
+            model = condition.get("equals")
+            if (
+                isinstance(then_endpoint, (str, int))
+                and isinstance(else_endpoint, (str, int))
+                and isinstance(model, str)
+            ):
+                return f"__conditional_endpoint:{model}:{then_endpoint}:{else_endpoint}"
     if isinstance(value, dict) and set(value) == {"__identifier__"}:
         local = locals_.get(str(value["__identifier__"]))
         if local is not None:
@@ -3508,6 +3542,39 @@ def _configure_endpoint(value: Any, locals_: dict[str, Any]) -> str | int | None
         if match:
             return int(match.group(1))
     return None
+
+
+def _expand_conditional_configure_actions(actions: list[ConfigureAction]) -> list[ConfigureAction]:
+    """Expand the small model-dependent endpoint selector into guarded actions."""
+    expanded: list[ConfigureAction] = []
+    prefix = "__conditional_endpoint:"
+    for action in actions:
+        if not isinstance(action.endpoint, str) or not action.endpoint.startswith(prefix):
+            expanded.append(action)
+            continue
+        parts = action.endpoint.split(":")
+        if len(parts) != 4:
+            expanded.append(action)
+            continue
+        _, model, then_endpoint, else_endpoint = parts
+        if not then_endpoint.isdigit() or not else_endpoint.isdigit():
+            expanded.append(action)
+            continue
+        expanded.append(
+            replace(
+                action,
+                endpoint=int(then_endpoint),
+                condition={"property": "modelID", "equals": model},
+            )
+        )
+        expanded.append(
+            replace(
+                action,
+                endpoint=int(else_endpoint),
+                condition={"property": "modelID", "not_equals": model},
+            )
+        )
+    return expanded
 
 
 def _resolve_config_value(value: Any, locals_: dict[str, Any]) -> Any:
@@ -4259,7 +4326,7 @@ def _configure_actions(
             )
             continue
         unsupported = True
-    return actions, unsupported
+    return _expand_conditional_configure_actions(actions), unsupported
 
 
 def _device(

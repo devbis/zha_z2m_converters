@@ -2595,6 +2595,75 @@ class ParserTests(unittest.TestCase):
         self.assertIsInstance(calls[0]["time"], int)
         self.assertIsInstance(calls[0]["timeZone"], int)
 
+    def test_configure_expands_model_dependent_endpoint(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["PIR313-E", "PIR313"],
+            model: "PIR313-E",
+            vendor: "OWON",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint2 = device.getEndpoint(2);
+                const endpoint3 = device.getEndpoint(3);
+                const measurementEndpoint = device.modelID === "PIR313" ? endpoint3 : endpoint2;
+                await reporting.bind(measurementEndpoint, coordinatorEndpoint, ["msTemperatureMeasurement"]);
+                await reporting.temperature(measurementEndpoint, {min: 60, max: 3600, change: 50});
+            },
+        }];
+        """
+        device = parse_source(source, "configure-conditional-endpoint.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [(action.operation, action.endpoint, action.cluster, action.condition) for action in device.configure_actions],
+            [
+                ("bind", 3, "msTemperatureMeasurement", {"property": "modelID", "equals": "PIR313"}),
+                ("bind", 2, "msTemperatureMeasurement", {"property": "modelID", "not_equals": "PIR313"}),
+                ("configure_reporting", 3, "msTemperatureMeasurement", {"property": "modelID", "equals": "PIR313"}),
+                ("configure_reporting", 2, "msTemperatureMeasurement", {"property": "modelID", "not_equals": "PIR313"}),
+            ],
+        )
+
+    def test_runtime_applies_only_matching_configure_condition(self) -> None:
+        calls = []
+
+        class Cluster:
+            cluster_id = 0x0402
+
+            def __init__(self, endpoint_id):
+                self.endpoint_id = endpoint_id
+
+            async def read_attributes(self, attributes):
+                calls.append((self.endpoint_id, attributes))
+
+        class Endpoint:
+            out_clusters = {}
+
+            def __init__(self, endpoint_id):
+                self.in_clusters = {0x0402: Cluster(endpoint_id)}
+
+        class ZigpyDevice:
+            model = "PIR313"
+            endpoints = {2: Endpoint(2), 3: Endpoint(3)}
+
+        class Device:
+            _zigpy_device = ZigpyDevice()
+
+        asyncio.run(
+            _apply_configure_actions(
+                Device(),
+                (
+                    ConfigureAction(
+                        "read", 3, "msTemperatureMeasurement", attributes=("measuredValue",),
+                        condition={"property": "modelID", "equals": "PIR313"},
+                    ),
+                    ConfigureAction(
+                        "read", 2, "msTemperatureMeasurement", attributes=("measuredValue",),
+                        condition={"property": "modelID", "not_equals": "PIR313"},
+                    ),
+                ),
+            )
+        )
+        self.assertEqual(calls, [(3, ["measuredValue"])])
+
     def test_configure_extracts_static_device_type_assignment(self) -> None:
         source = """
         export const definitions = [{
