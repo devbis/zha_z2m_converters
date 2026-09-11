@@ -51,6 +51,19 @@ _STATIC_MANUFACTURER_CODES = {
 }
 
 
+_STATIC_REP_INTERVALS = {
+    "HOUR": 3600,
+    "MAX": 65000,
+    "MINUTE": 60,
+    "SECONDS_10": 10,
+    "MINUTES_10": 600,
+    "MINUTES_15": 900,
+    "MINUTES_30": 1800,
+    "MINUTES_5": 300,
+    "SECONDS_5": 5,
+}
+
+
 @dataclass
 class _ObjectParser:
     tokens: list[Token]
@@ -701,19 +714,10 @@ def _resolve_static_path(constants: dict[str, Any], parts: list[str]) -> Any:
 def _find_static_constants(tokens: list[Token]) -> dict[str, Any]:
     """Collect literal variable declarations without evaluating expressions."""
     constants: dict[str, Any] = {
-        "constants": {
-            "repInterval": {
-                "HOUR": 3600,
-                "MAX": 65000,
-                "MINUTE": 60,
-                "SECONDS_10": 10,
-                "MINUTES_10": 600,
-                "MINUTES_15": 900,
-                "MINUTES_30": 1800,
-                "MINUTES_5": 300,
-                "SECONDS_5": 5,
-            },
-        },
+        "constants": {"repInterval": dict(_STATIC_REP_INTERVALS)},
+        # Some converters import repInterval directly instead of through the
+        # constants namespace.
+        "repInterval": dict(_STATIC_REP_INTERVALS),
         "Zcl": {"ManufacturerCode": dict(_STATIC_MANUFACTURER_CODES)},
     }
     for index, token in enumerate(tokens):

@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 327 |
+| `configure` | 322 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -101,13 +101,13 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 327 |
+| Any unsupported configure part | 322 |
 | dynamic syntax or control flow | 189 |
 | unsupported endpoint/device operation | 108 |
 | unsupported configure call | 52 |
-| unsupported endpoint operation arguments | 49 |
+| unsupported endpoint operation arguments | 45 |
 | direct or unsupported configure expression | 45 |
-| unsupported reporting arguments | 5 |
+| unsupported reporting arguments | 4 |
 | unsupported reporting helper | 3 |
 
 ### Configure: dynamic syntax or control flow
@@ -138,17 +138,17 @@ Categories can overlap when one definition has several different gaps.
 | `m.setupAttributes` | 5 |
 | `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
-| `heiman.configureReporting.batteryState` | 2 |
 | `heiman.configureReporting.pm10measuredValue` | 2 |
-| `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
-| `heiman.configureReporting.pm25MeasuredValue` | 2 |
+| `heiman.configureReporting.batteryState` | 2 |
 | `heiman.configureReporting.aqiMeasuredValue` | 2 |
+| `heiman.configureReporting.pm25MeasuredValue` | 2 |
+| `heiman.configureReporting.formAldehydeMeasuredValue` | 2 |
 | `syncTime` | 2 |
-| `lightConfiguration` | 1 |
 | `shutterConfiguration` | 1 |
+| `lightConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
-| `initConfig` | 1 |
 | `logger.debug` | 1 |
+| `initConfig` | 1 |
 | `heiman.configureReporting.tvocMeasuredValue` | 1 |
 | `ensureLumiIasEnrollment` | 1 |
 | `logger.info` | 1 |
@@ -163,8 +163,8 @@ Categories can overlap when one definition has several different gaps.
 | `endpoint.read` | 21 |
 | `endpoint1.write` | 12 |
 | `endpoint.write` | 9 |
-| `endpoint.configureReporting` | 6 |
 | `endpoint.command` | 2 |
+| `endpoint.configureReporting` | 2 |
 | `endpoint.bind` | 2 |
 | `mainController.read` | 1 |
 | `endpoint1.read` | 1 |
@@ -176,9 +176,8 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `reporting.bind` | 4 |
-| `reporting.temperature` | 1 |
 | `reporting.humidity` | 1 |
-| `reporting.batteryVoltage` | 1 |
+| `reporting.temperature` | 1 |
 
 ### Configure: direct or unsupported configure expression
 

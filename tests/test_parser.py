@@ -2077,6 +2077,25 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_configure_resolves_direct_rep_interval_import(self) -> None:
+        source = """
+        import {repInterval} from "../lib/constants";
+        export const definitions = [{
+            zigbeeModel: ["DIRECT_CONSTANTS"],
+            model: "Direct constants",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                await endpoint.configureReporting("genOnOff", [
+                    {attribute: "onOff", minimumReportInterval: 0, maximumReportInterval: repInterval.HOUR, reportableChange: 0},
+                ]);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-direct-constants.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.configure_actions[0].maximum_interval, 3600)
+
     def test_custom_electricity_converter_keeps_device_partial(self) -> None:
         source = """
         export const definitions = [{
