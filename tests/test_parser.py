@@ -1969,6 +1969,50 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(Device._zigpy_device.type, "EndDevice")
         self.assertEqual(Device._zigpy_device.software_build_id, "0.0.0_007")
 
+    def test_static_configure_selector_reads_all_matching_input_endpoints(self) -> None:
+        calls = []
+
+        class Cluster:
+            cluster_id = 0x0300
+
+            def __init__(self, endpoint_id):
+                self.endpoint_id = endpoint_id
+
+            async def read_attributes(self, attributes):
+                calls.append((self.endpoint_id, attributes))
+
+        class Endpoint:
+            out_clusters = {}
+
+            def __init__(self, endpoint_id, has_lighting):
+                self.in_clusters = {0x0300: Cluster(endpoint_id)} if has_lighting else {}
+
+        class ZigpyDevice:
+            endpoints = {
+                1: Endpoint(1, True),
+                2: Endpoint(2, False),
+                3: Endpoint(3, True),
+            }
+
+        class Device:
+            _zigpy_device = ZigpyDevice()
+
+        asyncio.run(
+            _apply_configure_actions(
+                Device(),
+                (
+                    ConfigureAction(
+                        "read",
+                        "__all_with_input_cluster:lightingColorCtrl",
+                        "lightingColorCtrl",
+                        attributes=("colorCapabilities",),
+                        target="device",
+                    ),
+                ),
+            )
+        )
+        self.assertEqual(calls, [(1, ["colorCapabilities"]), (3, ["colorCapabilities"])])
+
     def test_static_configure_actions_pass_manufacturer_code(self) -> None:
         calls = []
 
@@ -2469,6 +2513,43 @@ class ParserTests(unittest.TestCase):
                     payload={"name": "powerSource", "value": "Mains (single phase)"},
                     target="device",
                 )
+            ],
+        )
+
+    def test_configure_expands_light_configure_macro(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["LS_LIGHT"],
+            model: "L&S light",
+            vendor: "Example",
+            configure: m.light({colorTemp: {range: [153, 454]}, color: true}).configure[0],
+        }];
+        """
+        device = parse_source(source, "configure-light-macro.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            device.configure_actions,
+            [
+                ConfigureAction(
+                    "set_device_property",
+                    payload={"name": "powerSource", "value": "Mains (single phase)"},
+                    options={"only_if": "Unknown"},
+                    target="device",
+                ),
+                ConfigureAction(
+                    "read",
+                    "__all_with_input_cluster:lightingColorCtrl",
+                    "lightingColorCtrl",
+                    attributes=("colorCapabilities",),
+                    target="device",
+                ),
+                ConfigureAction(
+                    "read",
+                    "__all_with_input_cluster:lightingColorCtrl",
+                    "lightingColorCtrl",
+                    attributes=("colorTempPhysicalMin", "colorTempPhysicalMax"),
+                    target="device",
+                ),
             ],
         )
 

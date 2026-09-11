@@ -992,6 +992,17 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
             property_value = (action.payload or {}).get("value")
             if property_name == "powerSource":
                 target = zigpy_device or device
+                if action.options and action.options.get("only_if") == "Unknown":
+                    current_power_source = next(
+                        (
+                            getattr(target, attribute_name)
+                            for attribute_name in ("power_source", "powerSource")
+                            if hasattr(target, attribute_name)
+                        ),
+                        None,
+                    )
+                    if current_power_source != "Unknown":
+                        continue
                 for attribute_name in ("power_source", "powerSource"):
                     if hasattr(target, attribute_name):
                         setattr(target, attribute_name, property_value)
@@ -1020,69 +1031,70 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
                         if hasattr(target, attribute_name):
                             setattr(target, attribute_name, property_value)
             continue
-        endpoint_id, endpoint = _resolve_configure_endpoint(endpoints, action.endpoint)
-        if endpoint is None:
-            _LOGGER.warning("Configure endpoint %s is not present", endpoint_id)
+        endpoint_candidates = _resolve_configure_endpoints(endpoints, action.endpoint)
+        if not endpoint_candidates:
+            _LOGGER.warning("Configure endpoint %s is not present", action.endpoint)
             continue
-        cluster = _find_configure_cluster(endpoint, action.cluster)
-        if cluster is None:
-            _LOGGER.warning("Configure cluster %r is not present on endpoint %s", action.cluster, endpoint_id)
-            continue
-        try:
-            if action.operation == "bind":
-                await _bind_configure_cluster(
-                    zigpy_device or getattr(endpoint, "device", None),
-                    endpoint_id,
-                    cluster,
-                    action.destination_endpoint,
-                    action.destination,
-                )
-            elif action.operation == "read":
-                read_kwargs = (
-                    {"manufacturer": action.manufacturer_code}
-                    if action.manufacturer_code is not None
-                    else {}
-                )
-                await cluster.read_attributes(list(action.attributes), **read_kwargs)
-            elif action.operation == "configure_reporting":
-                if len(action.attributes) != 1:
-                    _LOGGER.warning("Configure reporting requires one attribute: %s", action)
-                    continue
-                attribute = action.attributes[0]
-                if action.manufacturer_code is not None:
-                    attribute = cluster.find_attribute(
-                        attribute,
-                        manufacturer_code=action.manufacturer_code,
+        for endpoint_id, endpoint in endpoint_candidates:
+            cluster = _find_configure_cluster(endpoint, action.cluster)
+            if cluster is None:
+                _LOGGER.warning("Configure cluster %r is not present on endpoint %s", action.cluster, endpoint_id)
+                continue
+            try:
+                if action.operation == "bind":
+                    await _bind_configure_cluster(
+                        zigpy_device or getattr(endpoint, "device", None),
+                        endpoint_id,
+                        cluster,
+                        action.destination_endpoint,
+                        action.destination,
                     )
-                await cluster.configure_reporting(
-                    attribute,
-                    int(action.minimum_interval or 0),
-                    int(action.maximum_interval or 0),
-                    int(action.reportable_change or 0),
-                )
-            elif action.operation == "write":
-                write_kwargs = (
-                    {"manufacturer": action.manufacturer_code}
-                    if action.manufacturer_code is not None
-                    else {}
-                )
-                await cluster.write_attributes(action.payload or {}, **write_kwargs)
-            elif action.operation == "save_cluster_attributes":
-                attribute_cache = getattr(cluster, "_attr_cache", None)
-                if not isinstance(attribute_cache, dict):
-                    _LOGGER.warning("Cluster %r has no attribute cache", action.cluster)
-                    continue
-                attribute_cache.update(action.payload or {})
-            elif action.operation == "command":
-                command_payload = dict(action.payload or {})
-                if action.options and action.options.get("disableDefaultResponse") is True:
-                    # zigpy exposes the closest equivalent as expect_reply.
-                    command_payload["expect_reply"] = False
-                await cluster.command(action.command, **command_payload)
-            else:
-                _LOGGER.warning("Unsupported configure operation %r", action.operation)
-        except Exception:  # pragma: no cover - transport errors depend on zigpy
-            _LOGGER.warning("Configure action failed: %s", action, exc_info=True)
+                elif action.operation == "read":
+                    read_kwargs = (
+                        {"manufacturer": action.manufacturer_code}
+                        if action.manufacturer_code is not None
+                        else {}
+                    )
+                    await cluster.read_attributes(list(action.attributes), **read_kwargs)
+                elif action.operation == "configure_reporting":
+                    if len(action.attributes) != 1:
+                        _LOGGER.warning("Configure reporting requires one attribute: %s", action)
+                        continue
+                    attribute = action.attributes[0]
+                    if action.manufacturer_code is not None:
+                        attribute = cluster.find_attribute(
+                            attribute,
+                            manufacturer_code=action.manufacturer_code,
+                        )
+                    await cluster.configure_reporting(
+                        attribute,
+                        int(action.minimum_interval or 0),
+                        int(action.maximum_interval or 0),
+                        int(action.reportable_change or 0),
+                    )
+                elif action.operation == "write":
+                    write_kwargs = (
+                        {"manufacturer": action.manufacturer_code}
+                        if action.manufacturer_code is not None
+                        else {}
+                    )
+                    await cluster.write_attributes(action.payload or {}, **write_kwargs)
+                elif action.operation == "save_cluster_attributes":
+                    attribute_cache = getattr(cluster, "_attr_cache", None)
+                    if not isinstance(attribute_cache, dict):
+                        _LOGGER.warning("Cluster %r has no attribute cache", action.cluster)
+                        continue
+                    attribute_cache.update(action.payload or {})
+                elif action.operation == "command":
+                    command_payload = dict(action.payload or {})
+                    if action.options and action.options.get("disableDefaultResponse") is True:
+                        # zigpy exposes the closest equivalent as expect_reply.
+                        command_payload["expect_reply"] = False
+                    await cluster.command(action.command, **command_payload)
+                else:
+                    _LOGGER.warning("Unsupported configure operation %r", action.operation)
+            except Exception:  # pragma: no cover - transport errors depend on zigpy
+                _LOGGER.warning("Configure action failed: %s", action, exc_info=True)
 
 
 def _resolve_configure_endpoint(endpoints: Any, endpoint: str | int | None) -> tuple[str | int, Any | None]:
@@ -1099,12 +1111,27 @@ def _resolve_configure_endpoint(endpoints: Any, endpoint: str | int | None) -> t
     return endpoint_id, endpoints.get(endpoint_id)
 
 
-def _find_configure_cluster(endpoint: Any, cluster: str | int | None) -> Any | None:
+def _resolve_configure_endpoints(
+    endpoints: Any,
+    endpoint: str | int | None,
+) -> list[tuple[str | int, Any]]:
+    """Resolve one endpoint or a safe selector for all matching input clusters."""
+    if isinstance(endpoint, str) and endpoint.startswith("__all_with_input_cluster:"):
+        selected_cluster = endpoint.split(":", 1)[1]
+        return [
+            (endpoint_id, item)
+            for endpoint_id, item in sorted(endpoints.items())
+            if endpoint_id != 0 and _find_configure_cluster(item, selected_cluster, input_only=True) is not None
+        ]
+    endpoint_id, resolved = _resolve_configure_endpoint(endpoints, endpoint)
+    return [(endpoint_id, resolved)] if resolved is not None else []
+
+
+def _find_configure_cluster(endpoint: Any, cluster: str | int | None, input_only: bool = False) -> Any | None:
     cluster_id = _cluster_id(cluster)
-    candidates = [
-        *getattr(endpoint, "in_clusters", {}).values(),
-        *getattr(endpoint, "out_clusters", {}).values(),
-    ]
+    candidates = list(getattr(endpoint, "in_clusters", {}).values())
+    if not input_only:
+        candidates.extend(getattr(endpoint, "out_clusters", {}).values())
     if cluster_id is not None:
         for candidate in candidates:
             if int(getattr(candidate, "cluster_id", -1)) == cluster_id:

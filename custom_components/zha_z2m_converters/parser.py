@@ -197,6 +197,22 @@ class _ObjectParser:
                 self.skip_balanced("<", ">")
             if self.current().value == "(":
                 value: Any = {"__call__": ".".join(parts), "args": self.parse_call_args()}
+                if (
+                    value["__call__"].rsplit(".", 1)[-1] == "light"
+                    and self.current().value == "."
+                    and self.index + 3 < len(self.tokens)
+                    and self.tokens[self.index + 1].value == "configure"
+                    and self.tokens[self.index + 2].value == "["
+                    and self.tokens[self.index + 3].kind == "number"
+                ):
+                    self.take(".")
+                    self.take("configure")
+                    self.take("[")
+                    configure_index = self.take().value
+                    self.take("]")
+                    if configure_index != "0":
+                        raise UnsupportedSyntax("only the first light configure macro is supported")
+                    return {"__configure_macro__": "light", "args": value["args"]}
                 methods = []
                 while self.current().value in (".", "?."):
                     self.take()
@@ -3812,6 +3828,32 @@ def _configure_actions(
     """Extract a small whitelist of bind and read operations from a callback."""
     if value is None or value == []:
         return [], False
+    if isinstance(value, dict) and value.get("__configure_macro__") == "light":
+        actions = [
+            ConfigureAction(
+                "set_device_property",
+                payload={"name": "powerSource", "value": "Mains (single phase)"},
+                options={"only_if": "Unknown"},
+                target="device",
+            ),
+            ConfigureAction(
+                "read",
+                "__all_with_input_cluster:lightingColorCtrl",
+                "lightingColorCtrl",
+                attributes=("colorCapabilities",),
+                target="device",
+            ),
+        ]
+        actions.append(
+            ConfigureAction(
+                "read",
+                "__all_with_input_cluster:lightingColorCtrl",
+                "lightingColorCtrl",
+                attributes=("colorTempPhysicalMin", "colorTempPhysicalMax"),
+                target="device",
+            )
+        )
+        return actions, False
     if not isinstance(value, dict) or "__configure__" not in value:
         return [], True
     local_values = value.get("__locals__", {})

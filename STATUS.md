@@ -81,7 +81,7 @@ the safe declarative translation to ZHA.
 
 | Item | Definitions |
 |---|---:|
-| `configure` | 161 |
+| `configure` | 160 |
 | `exposes` | 87 |
 | `onEvent` | 16 |
 | `endpoint` | 10 |
@@ -100,11 +100,10 @@ Categories can overlap when one definition has several different gaps.
 
 | Configure problem | Definitions |
 |---|---:|
-| Any unsupported configure part | 161 |
+| Any unsupported configure part | 160 |
 | dynamic syntax or control flow | 143 |
 | unsupported configure call | 53 |
 | unsupported endpoint operation arguments | 2 |
-| direct or unsupported configure expression | 1 |
 | unsupported reporting arguments | 1 |
 | unsupported endpoint/device operation | 1 |
 
@@ -124,8 +123,8 @@ Categories can overlap when one definition has several different gaps.
 | `utils.attachOutputCluster` | 5 |
 | `utils.sleep` | 3 |
 | `syncTime` | 2 |
-| `shutterConfiguration` | 1 |
 | `lightConfiguration` | 1 |
+| `shutterConfiguration` | 1 |
 | `zhemi101ReadMeteringConfiguration` | 1 |
 | `initConfig` | 1 |
 | `logger.debug` | 1 |
@@ -133,9 +132,9 @@ Categories can overlap when one definition has several different gaps.
 | `logger.info` | 1 |
 | `safeReadEdge` | 1 |
 | `ensureNyceIasEnrollment` | 1 |
-| `delay` | 1 |
-| `setProductName` | 1 |
 | `readFd22Attributes` | 1 |
+| `setProductName` | 1 |
+| `delay` | 1 |
 | `readReportingConfiguration` | 1 |
 | `tuya.sendDataPointEnum` | 1 |
 | `tuya.sendDataPointBool` | 1 |
@@ -145,12 +144,6 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `endpoint.write` | 2 |
-
-### Configure: direct or unsupported configure expression
-
-| Item | Definitions |
-|---|---:|
-| `<unknown>` | 1 |
 
 ### Configure: unsupported reporting arguments
 
