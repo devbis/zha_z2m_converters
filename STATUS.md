@@ -34,21 +34,21 @@ the safe declarative translation to ZHA.
 | `lumiPreventReset` | 61 |
 | `commandsScenes` | 30 |
 | `lockExtend` | 26 |
-| `commandsWindowCovering` | 24 |
 | `addLegrandDevicesCluster` | 24 |
-| `poll` | 23 |
+| `commandsWindowCovering` | 24 |
 | `acConnected` | 23 |
-| `onokomHvacThermostatCluster` | 22 |
-| `onokomHvacFanCtrlCluster` | 22 |
+| `poll` | 23 |
 | `currentTemperature` | 22 |
-| `targetTemperature` | 22 |
-| `systemMode` | 22 |
-| `mode` | 22 |
-| `zbFanSpeed` | 22 |
 | `fanSpeed` | 22 |
+| `mode` | 22 |
+| `onokomHvacFanCtrlCluster` | 22 |
+| `onokomHvacThermostatCluster` | 22 |
 | `smartFanSpeed` | 22 |
 | `statusLed` | 22 |
-| `mullerLichtLight` | 20 |
+| `systemMode` | 22 |
+| `targetTemperature` | 22 |
+| `zbFanSpeed` | 22 |
+| `horizontalVanes` | 20 |
 | *643 more items* | — |
 
 ### Unsupported converter bindings
@@ -59,22 +59,22 @@ the safe declarative translation to ZHA.
 | `lumi_action_multistate` | 52 |
 | `cluster_fc01` | 21 |
 | `tuya_switch_state` | 19 |
-| `led_mode` | 18 |
 | `ballast_config` | 18 |
+| `led_mode` | 18 |
 | `ignore_tuya_set_time` | 17 |
 | `tuya_switch` | 16 |
+| `TS0726_action` | 14 |
 | `heimanClusterSpecialfz` | 14 |
 | `lumi_action` | 14 |
-| `TS0726_action` | 14 |
 | `light_onoff_brightness` | 13 |
 | `pincode_lock` | 13 |
 | `command_move_hue` | 12 |
 | `operation_mode` | 12 |
 | `sihas_action` | 12 |
-| `lock_programming_event` | 11 |
-| `lock_pin_code_response` | 11 |
-| `ias_contact_alarm_1_report` | 11 |
 | `datapoints` | 11 |
+| `ias_contact_alarm_1_report` | 11 |
+| `lock_pin_code_response` | 11 |
+| `lock_programming_event` | 11 |
 | *981 more items* | — |
 
 ### Unsupported definition fields
@@ -89,8 +89,8 @@ the safe declarative translation to ZHA.
 | `fromZigbee` | 5 |
 | `<spread>` | 4 |
 | `toZigbee` | 2 |
-| `options` | 1 |
 | `meta` | 1 |
+| `options` | 1 |
 
 ## Configure gaps
 
@@ -117,21 +117,21 @@ Categories can overlap when one definition has several different gaps.
 | Item | Definitions |
 |---|---:|
 | `if` | 30 |
-| `shutterConfiguration` | 1 |
-| `lightConfiguration` | 1 |
-| `zhemi101ReadMeteringConfiguration` | 1 |
-| `logger.debug` | 1 |
-| `initConfig` | 1 |
-| `ensureLumiIasEnrollment` | 1 |
-| `logger.info` | 1 |
-| `safeReadEdge` | 1 |
-| `ensureNyceIasEnrollment` | 1 |
-| `readFd22Attributes` | 1 |
 | `delay` | 1 |
-| `setProductName` | 1 |
+| `ensureLumiIasEnrollment` | 1 |
+| `ensureNyceIasEnrollment` | 1 |
+| `initConfig` | 1 |
+| `lightConfiguration` | 1 |
+| `logger.debug` | 1 |
+| `logger.info` | 1 |
+| `readFd22Attributes` | 1 |
 | `readReportingConfiguration` | 1 |
-| `tuya.sendDataPointEnum` | 1 |
+| `safeReadEdge` | 1 |
+| `setProductName` | 1 |
+| `shutterConfiguration` | 1 |
 | `tuya.sendDataPointBool` | 1 |
+| `tuya.sendDataPointEnum` | 1 |
+| `zhemi101ReadMeteringConfiguration` | 1 |
 
 ### Configure: unsupported endpoint/device operation
 

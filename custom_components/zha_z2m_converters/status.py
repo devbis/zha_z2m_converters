@@ -169,7 +169,7 @@ def _append_counter_table(lines: list[str], title: str, counter: Counter[str], l
     if not counter:
         return
     lines.extend([f"### {title}", "", "| Item | Definitions |", "|---|---:|"])
-    for name, count in counter.most_common(limit):
+    for name, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:limit]:
         lines.append(f"| `{name}` | {count:,} |")
     if len(counter) > limit:
         lines.append(f"| *{len(counter) - limit:,} more items* | — |")
@@ -232,7 +232,7 @@ def render_status(report: StatusReport, top: int = 20) -> str:
         "|---|---:|",
         f"| Any unsupported configure part | {configure.definitions:,} |",
     ])
-    for category, count in configure.categories.most_common():
+    for category, count in sorted(configure.categories.items(), key=lambda item: (-item[1], item[0])):
         lines.append(f"| {category} | {count:,} |")
     lines.append("")
     for category, calls in configure.calls.items():
