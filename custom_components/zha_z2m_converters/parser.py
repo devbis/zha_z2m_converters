@@ -394,6 +394,22 @@ class _ObjectParser:
             and self.tokens[self.index + 3].value == "="
         )
 
+    def looks_like_static_local_assignment(self) -> bool:
+        """Recognize a plain local reassignment with a static value."""
+        return (
+            self.current().kind == "identifier"
+            and self.index + 1 < len(self.tokens)
+            and self.tokens[self.index + 1].value == "="
+        )
+
+    def parse_static_local_assignment(self, locals_: dict[str, Any]) -> None:
+        """Parse a local reassignment without evaluating JavaScript."""
+        name = self.take().value
+        self.take("=")
+        value = self.parse_value()
+        locals_[name] = value
+        self.constants[name] = value
+
     def parse_static_device_assignment(self) -> dict[str, Any]:
         """Parse a supported literal device metadata assignment."""
         self.take("device")
@@ -463,6 +479,8 @@ class _ObjectParser:
             try:
                 if self.looks_like_static_device_assignment():
                     statements.append(self.parse_static_device_assignment())
+                elif self.looks_like_static_local_assignment():
+                    self.parse_static_local_assignment(locals_)
                 elif self.current().value in {"const", "let", "var"}:
                     self.take()
                     if self.current().value == "{":
@@ -571,6 +589,8 @@ class _ObjectParser:
             try:
                 if self.looks_like_static_device_assignment():
                     statements.append(self.parse_static_device_assignment())
+                elif self.looks_like_static_local_assignment():
+                    self.parse_static_local_assignment(locals_)
                 elif self.current().value in {"const", "let", "var"}:
                     self.take()
                     if self.current().value == "{":

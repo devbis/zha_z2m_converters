@@ -1674,6 +1674,28 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(device.partial)
         self.assertEqual(device.configure_actions[0].options, {"disableDefaultResponse": True})
 
+    def test_static_configure_reporting_payload_reassignment_is_extracted(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["REPORTING_PAYLOAD_REASSIGNMENT"],
+            model: "Reporting payload reassignment",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                const endpoint = device.getEndpoint(1);
+                let payload = reporting.payload("firstAttribute", 1, 120, 1);
+                await endpoint.configureReporting("exampleCluster", payload);
+                payload = reporting.payload("secondAttribute", 1, 120, 1);
+                await endpoint.configureReporting("exampleCluster", payload);
+            },
+        }];
+        """
+        device = parse_source(source, "configure-reporting-payload-reassignment.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(
+            [action.attributes for action in device.configure_actions],
+            [("firstAttribute",), ("secondAttribute",)],
+        )
+
     def test_static_configure_actions_execute_only_whitelisted_operations(self) -> None:
         calls = []
 
