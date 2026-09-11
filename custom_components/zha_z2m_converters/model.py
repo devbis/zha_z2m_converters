@@ -75,6 +75,7 @@ class ConfigureAction:
     reportable_change: Any = None
     command: str | int | None = None
     payload: dict[str, Any] | None = None
+    options: dict[str, Any] | None = None
     target: str = "coordinator"
     manufacturer_code: int | None = None
 

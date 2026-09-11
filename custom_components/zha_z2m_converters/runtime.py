@@ -1038,7 +1038,11 @@ async def _apply_configure_actions(device: Any, actions: tuple[ConfigureAction, 
                     continue
                 attribute_cache.update(action.payload or {})
             elif action.operation == "command":
-                await cluster.command(action.command, **(action.payload or {}))
+                command_payload = dict(action.payload or {})
+                if action.options and action.options.get("disableDefaultResponse") is True:
+                    # zigpy exposes the closest equivalent as expect_reply.
+                    command_payload["expect_reply"] = False
+                await cluster.command(action.command, **command_payload)
             else:
                 _LOGGER.warning("Unsupported configure operation %r", action.operation)
         except Exception:  # pragma: no cover - transport errors depend on zigpy

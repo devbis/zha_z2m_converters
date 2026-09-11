@@ -1654,6 +1654,26 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_static_configure_command_options_are_extracted(self) -> None:
+        source = """
+        export const definitions = [{
+            zigbeeModel: ["COMMAND_OPTIONS"],
+            model: "Command options",
+            vendor: "Example",
+            configure: async (device, coordinatorEndpoint) => {
+                await device.getEndpoint(1).command(
+                    "genBasic",
+                    "tuyaSetup",
+                    {},
+                    {disableDefaultResponse: true},
+                );
+            },
+        }];
+        """
+        device = parse_source(source, "configure-command-options.ts").devices[0]
+        self.assertFalse(device.partial)
+        self.assertEqual(device.configure_actions[0].options, {"disableDefaultResponse": True})
+
     def test_static_configure_actions_execute_only_whitelisted_operations(self) -> None:
         calls = []
 
@@ -1704,7 +1724,14 @@ class ParserTests(unittest.TestCase):
                 maximum_interval=3600,
                 reportable_change=0,
             ),
-            ConfigureAction("command", 1, "genOnOff", command="on", payload={"payloadSize": 1}),
+            ConfigureAction(
+                "command",
+                1,
+                "genOnOff",
+                command="on",
+                payload={"payloadSize": 1},
+                options={"disableDefaultResponse": True},
+            ),
             ConfigureAction("write", 1, "genOnOff", payload={"onOff": 1}),
             ConfigureAction("save_cluster_attributes", 1, "genOnOff", payload={"onTime": 10}),
             ConfigureAction(
@@ -1738,7 +1765,7 @@ class ParserTests(unittest.TestCase):
                 ("bind",),
                 ("read", ["onOff"]),
                 ("reporting", "onOff", 0, 3600, 0),
-                ("command", "on", {"payloadSize": 1}),
+                ("command", "on", {"payloadSize": 1, "expect_reply": False}),
                 ("write", {"onOff": 1}, {}),
             ],
         )

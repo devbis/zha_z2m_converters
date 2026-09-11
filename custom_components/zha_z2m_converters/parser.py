@@ -3343,17 +3343,34 @@ def _configure_command_action(
     args: list[Any],
     locals_: dict[str, Any],
 ) -> ConfigureAction | None:
-    if len(args) not in {2, 3}:
+    if len(args) not in {2, 3, 4}:
         return None
     cluster = _static_value(args[0])
     command = _static_value(args[1])
-    payload = _resolve_config_value(args[2], locals_) if len(args) == 3 else {}
-    if not isinstance(cluster, (str, int)) or not isinstance(command, (str, int)) or not isinstance(payload, dict):
+    payload = _resolve_config_value(args[2], locals_) if len(args) >= 3 else {}
+    options = _resolve_config_value(args[3], locals_) if len(args) == 4 else None
+    if (
+        not isinstance(cluster, (str, int))
+        or not isinstance(command, (str, int))
+        or not isinstance(payload, dict)
+        or (options is not None and not isinstance(options, dict))
+    ):
         return None
     if any(_static_value(value) is None and value is not None for value in payload.values()):
         return None
+    if options is not None and any(_static_value(value) is None and value is not None for value in options.values()):
+        return None
     static_payload = {str(key): _static_value(value) for key, value in payload.items()}
-    return ConfigureAction("command", endpoint, cluster, command=command, payload=static_payload, target="device")
+    static_options = None if options is None else {str(key): _static_value(value) for key, value in options.items()}
+    return ConfigureAction(
+        "command",
+        endpoint,
+        cluster,
+        command=command,
+        payload=static_payload,
+        options=static_options,
+        target="device",
+    )
 
 
 def _configure_write_action(
