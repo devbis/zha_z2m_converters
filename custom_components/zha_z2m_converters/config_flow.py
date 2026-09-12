@@ -72,9 +72,10 @@ class ZhaZ2mConvertersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._settings = normalize_settings({**self._settings, **user_input})
             return self.async_create_entry(title="ZHA Z2M Converters", data=self._settings)
+        schema = await self._async_file_schema(self._settings)
         return self.async_show_form(
             step_id="files",
-            data_schema=self._file_schema(self._settings),
+            data_schema=schema,
         )
 
     def _mode_schema(self, settings: dict[str, Any]) -> vol.Schema:
@@ -85,21 +86,13 @@ class ZhaZ2mConvertersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-    def _file_schema(self, settings: dict[str, Any]) -> vol.Schema:
-        bundled_files = available_source_files(DEFAULT_SOURCE)
-        external_files = available_source_files(self.hass.config.path(DEFAULT_EXTERNAL_SOURCE))
-        return vol.Schema(
-            {
-                vol.Required(
-                    CONF_BUNDLED_FILES,
-                    default=_valid_defaults(settings[CONF_BUNDLED_FILES], bundled_files),
-                ): _file_selector(bundled_files),
-                vol.Required(
-                    CONF_EXTERNAL_FILES,
-                    default=_valid_defaults(settings[CONF_EXTERNAL_FILES], external_files),
-                ): _file_selector(external_files),
-            }
+    async def _async_file_schema(self, settings: dict[str, Any]) -> vol.Schema:
+        bundled_files, external_files = await self.hass.async_add_executor_job(
+            _available_file_options,
+            DEFAULT_SOURCE,
+            self.hass.config.path(DEFAULT_EXTERNAL_SOURCE),
         )
+        return _file_schema(settings, bundled_files, external_files)
 
 
 class ZhaZ2mConvertersOptionsFlow(config_entries.OptionsFlowWithReload):
@@ -124,7 +117,8 @@ class ZhaZ2mConvertersOptionsFlow(config_entries.OptionsFlowWithReload):
         if user_input is not None:
             self._settings = normalize_settings({**self._settings, **user_input})
             return self.async_create_entry(title="", data=self._settings)
-        return self.async_show_form(step_id="files", data_schema=self._file_schema(self._settings))
+        schema = await self._async_file_schema(self._settings)
+        return self.async_show_form(step_id="files", data_schema=schema)
 
     def _mode_schema(self, settings: dict[str, Any]) -> vol.Schema:
         return vol.Schema(
@@ -134,21 +128,13 @@ class ZhaZ2mConvertersOptionsFlow(config_entries.OptionsFlowWithReload):
             }
         )
 
-    def _file_schema(self, settings: dict[str, Any]) -> vol.Schema:
-        bundled_files = available_source_files(DEFAULT_SOURCE)
-        external_files = available_source_files(self.hass.config.path(DEFAULT_EXTERNAL_SOURCE))
-        return vol.Schema(
-            {
-                vol.Required(
-                    CONF_BUNDLED_FILES,
-                    default=_valid_defaults(settings[CONF_BUNDLED_FILES], bundled_files),
-                ): _file_selector(bundled_files),
-                vol.Required(
-                    CONF_EXTERNAL_FILES,
-                    default=_valid_defaults(settings[CONF_EXTERNAL_FILES], external_files),
-                ): _file_selector(external_files),
-            }
+    async def _async_file_schema(self, settings: dict[str, Any]) -> vol.Schema:
+        bundled_files, external_files = await self.hass.async_add_executor_job(
+            _available_file_options,
+            DEFAULT_SOURCE,
+            self.hass.config.path(DEFAULT_EXTERNAL_SOURCE),
         )
+        return _file_schema(settings, bundled_files, external_files)
 
 
 def _valid_defaults(values: Any, available: list[str]) -> list[str]:
@@ -157,3 +143,24 @@ def _valid_defaults(values: Any, available: list[str]) -> list[str]:
         return []
     available_set = set(available)
     return sorted({value for value in values if isinstance(value, str) and value in available_set})
+
+
+def _available_file_options(bundled_source: Any, external_source: Any) -> tuple[list[str], list[str]]:
+    """Discover both file lists outside Home Assistant's event loop."""
+    return available_source_files(bundled_source), available_source_files(external_source)
+
+
+def _file_schema(settings: dict[str, Any], bundled_files: list[str], external_files: list[str]) -> vol.Schema:
+    """Build a file-selection schema from already-discovered file names."""
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_BUNDLED_FILES,
+                default=_valid_defaults(settings[CONF_BUNDLED_FILES], bundled_files),
+            ): _file_selector(bundled_files),
+            vol.Required(
+                CONF_EXTERNAL_FILES,
+                default=_valid_defaults(settings[CONF_EXTERNAL_FILES], external_files),
+            ): _file_selector(external_files),
+        }
+    )

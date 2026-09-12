@@ -1363,8 +1363,17 @@ def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
         return False
     for cluster_factory, endpoints in required.items():
         try:
-            cluster = _tuya_datapoint_cluster(plan) if cluster_factory == "datapoint" else cluster_factory()
-        except ImportError:
+            if cluster_factory == "datapoint":
+                cluster = _tuya_datapoint_cluster(plan)
+            elif isinstance(cluster_factory, type):
+                # _custom_cluster_factory already returns a cluster class.
+                # QuirkBuilder.replaces expects that class and instantiates it
+                # with the endpoint later.
+                cluster = cluster_factory
+            else:
+                cluster = cluster_factory()
+        except (ImportError, TypeError, ValueError):
+            _LOGGER.warning("Cannot create declarative custom cluster %r", cluster_factory, exc_info=True)
             return False
         for endpoint in endpoints:
             replaces(cluster, endpoint_id=endpoint)

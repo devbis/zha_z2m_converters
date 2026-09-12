@@ -13,10 +13,10 @@ from zha_z2m_converters.exporter import export_python
 from zha_z2m_converters import _select_devices
 from zha_z2m_converters.mapping import normalize_device
 from zha_z2m_converters.parser import parse_path, parse_paths, parse_source
-from zha_z2m_converters.model import ConfigureAction, Expose
-from zha_z2m_converters.runtime import _apply_configure_actions, _apply_expose, _configure_endpoint_clusters, _make_enum_class
+from zha_z2m_converters.model import ConfigureAction, CustomClusterSpec, DeviceDefinition, Expose
+from zha_z2m_converters.runtime import _apply_configure_actions, _apply_expose, _configure_custom_clusters, _configure_endpoint_clusters, _make_enum_class
 from zha_z2m_converters.runtime import apply_report, build_runtime_plan, make_write, register_result
-from zha_z2m_converters.runtime import register_with_zha, RuntimeEntity, RuntimeReport
+from zha_z2m_converters.runtime import register_with_zha, RuntimeEntity, RuntimePlan, RuntimeReport
 from zha_z2m_converters.source import (
     SOURCE_MODE_ALL,
     SOURCE_MODE_SELECTED,
@@ -1424,6 +1424,24 @@ class ParserTests(unittest.TestCase):
             RuntimeEntity("unknown_value", "numeric", "unknown_value", None, None),
         )
         self.assertEqual(calls, [])
+
+    def test_custom_cluster_class_is_passed_to_quirk_builder_without_instantiation(self) -> None:
+        class Cluster:
+            pass
+
+        calls = []
+
+        class Builder:
+            def replaces(self, cluster, **kwargs):
+                calls.append((cluster, kwargs))
+
+        plan = RuntimePlan(
+            DeviceDefinition(),
+            custom_cluster_specs=[CustomClusterSpec("custom", 0xFC00)],
+        )
+        with patch("zha_z2m_converters.runtime._custom_cluster_factory", return_value=Cluster):
+            self.assertTrue(_configure_custom_clusters(Builder(), plan))
+        self.assertEqual(calls, [(Cluster, {"endpoint_id": 1})])
 
     def test_enum_expose_uses_integer_values_for_zha_select(self) -> None:
         enum_class = _make_enum_class(

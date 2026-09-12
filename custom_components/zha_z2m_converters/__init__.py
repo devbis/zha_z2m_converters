@@ -50,6 +50,24 @@ def _contains_typescript(path: Path) -> bool:
     return path.is_dir() and any(path.rglob("*.ts"))
 
 
+def _legacy_source_paths(hass: Any, domain_config: dict[str, Any]) -> tuple[Path | None, list[Path]]:
+    """Resolve legacy YAML source paths outside Home Assistant's event loop."""
+    source = Path(domain_config.get("source", DEFAULT_SOURCE))
+    if not source.exists():
+        return None, []
+    sources = [source]
+    configured_external_source = domain_config.get("external_source")
+    if configured_external_source:
+        external_source = Path(configured_external_source)
+        if not external_source.is_absolute():
+            external_source = Path(hass.config.path(str(external_source)))
+    else:
+        external_source = Path(hass.config.path(DEFAULT_EXTERNAL_SOURCE))
+    if external_source != source and _contains_typescript(external_source):
+        sources.append(external_source)
+    return source, sources
+
+
 def _select_devices(devices: list[DeviceDefinition], selectors: Any) -> list[DeviceDefinition]:
     """Select configured definitions, or keep the complete source when unset."""
     if selectors is None:
@@ -101,20 +119,13 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
     if "manufacturer" in domain_config or "model" in domain_config:
         _LOGGER.error("Use the zha_z2m_converters devices list; manufacturer/model options are not supported")
         return False
-    source = Path(domain_config.get("source", DEFAULT_SOURCE))
-    if not source.exists():
-        _LOGGER.error("Converter source directory does not exist: %s", source)
+    source, sources = await hass.async_add_executor_job(_legacy_source_paths, hass, domain_config)
+    if source is None:
+        _LOGGER.error(
+            "Converter source directory does not exist: %s",
+            domain_config.get("source", DEFAULT_SOURCE),
+        )
         return False
-    sources = [source]
-    configured_external_source = domain_config.get("external_source")
-    if configured_external_source:
-        external_source = Path(configured_external_source)
-        if not external_source.is_absolute():
-            external_source = Path(hass.config.path(str(external_source)))
-    else:
-        external_source = Path(hass.config.path(DEFAULT_EXTERNAL_SOURCE))
-    if external_source != source and _contains_typescript(external_source):
-        sources.append(external_source)
     result = await hass.async_add_executor_job(parse_paths, sources)
     result.devices = _select_devices(result.devices, domain_config.get("devices"))
     registry = register_result(result)
@@ -159,7 +170,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
         _LOGGER.warning("UI configuration will be applied after the next Home Assistant restart")
         return True
     settings = _entry_settings(entry)
-    source_paths = _selected_source_paths(hass, settings)
+    source_paths = await hass.async_add_executor_job(_selected_source_paths, hass, settings)
     result = await hass.async_add_executor_job(parse_paths, source_paths)
     registry = register_result(result)
     await hass.async_add_executor_job(register_with_zha, registry)
