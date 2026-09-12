@@ -2687,10 +2687,13 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         expose_type = {"numeric": "numeric", "binary": "binary", "text": "text", "enumLookup": "enum", "actionEnumLookup": "enum"}[name]
         expose_name = _static_text(args.get("name")) or _static_text(args.get("property"))
         cluster = _static_value(args.get("cluster"))
-        attribute = _static_value(args.get("attribute"))
+        attribute_spec = args.get("attribute")
+        attribute = _static_value(attribute_spec)
+        attribute_type = attribute_spec.get("type") if isinstance(attribute_spec, dict) else None
         if not expose_name or not cluster or not attribute:
             return [], [], name, False
-        access = _static_text(args.get("access")) or "ALL"
+        access_name = _static_text(args.get("access")) or "ALL"
+        access = ("state", "set") if access_name == "ALL" else tuple(access_name.lower().split("_"))
         unit = _static_text(args.get("unit"))
         lookup = args.get("lookup")
         values = tuple(str(item) for item in lookup if isinstance(item, (str, int))) if isinstance(lookup, dict) else ()
@@ -2698,7 +2701,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
             expose_type,
             expose_name,
             expose_name,
-            tuple(access.lower().split("_")),
+            access,
             endpoint=_static_text(args.get("endpointName")) or _static_text(args.get("endpoint")),
             unit=unit,
             value_min=args.get("valueMin") if isinstance(args.get("valueMin"), (int, float)) else None,
@@ -2710,7 +2713,17 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         )
         scale = args.get("scale")
         expression = Expression("divide", (scale,)) if isinstance(scale, (int, float)) and scale != 0 else None
-        return [expose], [Binding(name, cluster, attribute, direction="report", expression=expression)], name, True
+        return [expose], [
+            Binding(
+                name,
+                cluster,
+                attribute,
+                expose_name=expose_name,
+                attribute_type=attribute_type,
+                direction="report",
+                expression=expression,
+            )
+        ], name, True
     if name == "occupancy":
         return [Expose("occupancy", "occupancy", "occupancy", ("state",))], [Binding(name, "msOccupancySensing", "occupancy", direction="report")], name, True
     if name == "deviceTemperature":
@@ -2732,7 +2745,7 @@ def _modern_extend(call: Any) -> tuple[list[Expose], list[Binding], str | None, 
         for field_name, cluster, attribute, unit in fields:
             if args.get(field_name, True) is not False:
                 exposes.append(Expose("numeric", field_name, field_name, ("state",), unit=unit))
-                bindings.append(Binding(name, cluster, attribute, direction="report"))
+                bindings.append(Binding(name, cluster, attribute, expose_name=field_name, direction="report"))
         return exposes, bindings, name, True
     if name == "windowCovering":
         controls = args.get("controls", [])

@@ -60,6 +60,8 @@ class Binding:
     endpoint: str | int | None = None
     expression: Expression | None = None
     supported: bool = True
+    expose_name: str | None = None
+    attribute_type: int | str | None = None
 
 
 @dataclass(frozen=True)

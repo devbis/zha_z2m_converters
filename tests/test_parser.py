@@ -304,6 +304,51 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(apply_report(plan, RuntimeReport("msSoilMoisture", "measuredValue", 42)), {"soil_moisture": 42})
         self.assertEqual(apply_report(plan, RuntimeReport("msOccupancySensing", "pirOToUDelay", 90)), {"occupancy_timeout": 90})
 
+    def test_modern_meter_and_generic_exposes_keep_their_bindings(self) -> None:
+        source = """
+        export const definitions = [{
+            model: "Generic meter",
+            vendor: "Example",
+            extend: [
+                m.electricityMeter({}),
+                m.binary({name: "key_lock", cluster: "genOnOff", attribute: 0xf000}),
+                m.enumLookup({name: "led_control", cluster: "genOnOff", attribute: 0xf001, lookup: {off: 0, on: 1}}),
+                m.numeric({name: "voltage_max", cluster: "haElectricalMeasurement", attribute: "rmsExtremeOverVoltage", scale: 100}),
+            ],
+        }];
+        """
+        plan = build_runtime_plan(parse_source(source, "generic-meter.ts").devices[0])
+        entities = {item.name: item for item in plan.entities}
+
+        self.assertEqual(
+            (entities["power"].cluster, entities["power"].attribute),
+            ("electricalMeasurement", "activePower"),
+        )
+        self.assertEqual(
+            (entities["energy"].cluster, entities["energy"].attribute),
+            ("metering", "currentSummDelivered"),
+        )
+        self.assertEqual(
+            (entities["key_lock"].cluster, entities["key_lock"].attribute),
+            ("genOnOff", 0xF000),
+        )
+        self.assertEqual(entities["key_lock"].access, ("state", "set"))
+        self.assertEqual(
+            (entities["led_control"].cluster, entities["led_control"].attribute),
+            ("genOnOff", 0xF001),
+        )
+        self.assertEqual(
+            (entities["voltage_max"].cluster, entities["voltage_max"].attribute),
+            ("haElectricalMeasurement", "rmsExtremeOverVoltage"),
+        )
+
+    def test_cluster_aliases_are_compared_by_zcl_id(self) -> None:
+        from zha_z2m_converters.runtime import _same_cluster
+
+        self.assertTrue(_same_cluster("electricalMeasurement", "haElectricalMeasurement"))
+        self.assertTrue(_same_cluster("metering", "seMetering"))
+        self.assertTrue(_same_cluster("electrical_measurement", 0x0B04))
+
     def test_lumi_basic_exposes_use_fixed_attribute_paths(self) -> None:
         source = """
         export const definitions = [{
@@ -1435,6 +1480,27 @@ class ParserTests(unittest.TestCase):
             RuntimeEntity("child_lock", "binary", "child_lock", "genOnOff", "childLock", access=("state", "set")),
         )
         self.assertEqual([name for name, _ in calls], ["switch"])
+
+    def test_zcl_attribute_names_are_normalized_for_zigpy(self) -> None:
+        calls = []
+
+        class Builder:
+            def number(self, **kwargs):
+                calls.append(kwargs)
+
+        _apply_expose(
+            Builder(),
+            Expose("numeric", "voltage_min", "voltage_min", ("state", "set")),
+            RuntimeEntity(
+                "voltage_min",
+                "numeric",
+                "voltage_min",
+                "haElectricalMeasurement",
+                "rmsExtremeUnderVoltage",
+                access=("state", "set"),
+            ),
+        )
+        self.assertEqual(calls[0]["attribute_name"], "rms_extreme_under_voltage")
 
     def test_expose_without_cluster_mapping_does_not_abort_registration(self) -> None:
         calls = []

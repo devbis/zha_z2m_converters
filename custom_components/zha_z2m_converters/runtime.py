@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from enum import IntEnum
 import logging
 import math
+import re
 import threading
 from typing import Any
 
@@ -509,6 +510,16 @@ def _on_off_command(value: Any) -> str:
 
 
 def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | None:
+    named_binding = next(
+        (
+            item
+            for item in bindings
+            if item.expose_name == expose.name and item.direction == "report"
+        ),
+        None,
+    )
+    if named_binding is not None:
+        return named_binding
     datapoint_binding = next(
         (
             item
@@ -713,15 +724,30 @@ def _binding_for_expose(expose: Expose, bindings: list[Binding]) -> Binding | No
 def _same_cluster(left: str | int | None, right: str | int | None) -> bool:
     if left == right:
         return True
-    if isinstance(left, str) and left in ZCL_CLUSTER_IDS:
-        return ZCL_CLUSTER_IDS[left] == right
-    if isinstance(right, str) and right in ZCL_CLUSTER_IDS:
-        return ZCL_CLUSTER_IDS[right] == left
-    return False
+    left_id = ZCL_CLUSTER_IDS.get(left) if isinstance(left, str) else left
+    right_id = ZCL_CLUSTER_IDS.get(right) if isinstance(right, str) else right
+    return left_id is not None and left_id == right_id
 
 
 def _same_attribute(left: str | int | None, right: str | int | None) -> bool:
-    return left == right or (isinstance(left, str) and isinstance(right, str) and left.lower() == right.lower())
+    if left == right:
+        return True
+    if isinstance(left, str) and isinstance(right, str):
+        return _zha_attribute_key(left) == _zha_attribute_key(right)
+    return False
+
+
+def _zha_attribute_key(attribute: str) -> str:
+    """Normalize TypeScript and zigpy attribute names for comparisons."""
+    mapped = ZHA_ATTRIBUTE_NAMES.get(attribute, attribute)
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", mapped).lower()
+
+
+def _zha_attribute_name(attribute: str | int) -> str | int:
+    """Convert a converter attribute name to the name used by zigpy."""
+    if not isinstance(attribute, str):
+        return attribute
+    return _zha_attribute_key(attribute)
 
 
 def _apply_expression(value: Any, binding: Binding, endpoint: str | int | None = None) -> Any:
@@ -1114,7 +1140,10 @@ _DEFAULT_MEASUREMENT_ATTRIBUTES = {
 
 def _is_default_measurement_entity(entity: RuntimeEntity) -> bool:
     """Keep ZHA's native entities for standard electrical measurements."""
-    return (entity.cluster, entity.attribute) in _DEFAULT_MEASUREMENT_ATTRIBUTES
+    return any(
+        _same_cluster(entity.cluster, cluster) and _same_attribute(entity.attribute, attribute)
+        for cluster, attribute in _DEFAULT_MEASUREMENT_ATTRIBUTES
+    )
 
 
 def _prevent_unrepresented_default_entities(builder: Any, plan: RuntimePlan) -> None:
@@ -1475,7 +1504,7 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
         kwargs["attribute_name"] = (
             f"dp_{entity.dp}"
             if entity.dp is not None
-            else ZHA_ATTRIBUTE_NAMES.get(str(entity.attribute), entity.attribute)
+            else _zha_attribute_name(entity.attribute)
         )
     if expose.device_class:
         kwargs["device_class"] = expose.device_class
@@ -1544,7 +1573,8 @@ def _is_command_backed(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
 
 def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
     return (
-        any(_same_cluster(entity.cluster, spec.name) for spec in plan.custom_cluster_specs)
+        _is_manufacturer_specific_attribute(entity)
+        or any(_same_cluster(entity.cluster, spec.name) for spec in plan.custom_cluster_specs)
         or _is_command_backed(plan, entity)
         or any(
             binding.converter.startswith("tuya_dp.") and _same_cluster(binding.cluster, entity.cluster)
@@ -1565,9 +1595,48 @@ def _requires_custom_cluster(plan: RuntimePlan, entity: RuntimeEntity) -> bool:
     )
 
 
+def _is_manufacturer_specific_attribute(entity: RuntimeEntity) -> bool:
+    """Return whether an entity references a high custom ZCL attribute ID."""
+    return isinstance(entity.attribute, int) and entity.attribute >= 0xF000 and _cluster_id(entity.cluster) is not None
+
+
+def _binding_attribute_type(plan: RuntimePlan, entity: RuntimeEntity) -> int | str | None:
+    """Find the static ZCL type attached to a generic converter attribute."""
+    for binding in plan.bindings:
+        if (
+            binding.expose_name == entity.name
+            and binding.attribute == entity.attribute
+            and _same_cluster(binding.cluster, entity.cluster)
+        ):
+            return binding.attribute_type
+    return None
+
+
 def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
     """Install the small Python-only custom clusters required by Tuya entities."""
     required: dict[Any, set[Any]] = {}
+    standard_custom_attributes: dict[int, dict[int, tuple[int | str | None, str]]] = {}
+    standard_custom_endpoints: dict[int, set[int]] = {}
+    for entity in plan.entities:
+        if not _is_manufacturer_specific_attribute(entity):
+            continue
+        cluster_id = _cluster_id(entity.cluster)
+        if cluster_id is None:
+            continue
+        standard_custom_attributes.setdefault(cluster_id, {})[entity.attribute] = (
+            _binding_attribute_type(plan, entity),
+            entity.type,
+        )
+        standard_custom_endpoints.setdefault(cluster_id, set()).add(entity.endpoint or 1)
+
+    for cluster_id, attributes in standard_custom_attributes.items():
+        try:
+            cluster_factory = _standard_custom_cluster_factory(cluster_id, attributes)
+        except (ImportError, AttributeError, TypeError, ValueError):
+            _LOGGER.warning("Cannot create standard custom cluster 0x%04x", cluster_id, exc_info=True)
+            return False
+        required.setdefault(cluster_factory, set()).update(standard_custom_endpoints[cluster_id])
+
     for spec in plan.custom_cluster_specs:
         try:
             cluster_factory = _custom_cluster_factory(spec)
@@ -1587,6 +1656,8 @@ def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
         required.setdefault(_tuya4_cluster, set()).add(1)
     for entity in plan.entities:
         if not _requires_custom_cluster(plan, entity):
+            continue
+        if _is_manufacturer_specific_attribute(entity):
             continue
         if any(binding.converter.startswith("tuya_dp.") and _same_cluster(binding.cluster, entity.cluster) for binding in plan.bindings):
             required.setdefault("datapoint", set()).add(entity.endpoint or 1)
@@ -1620,13 +1691,88 @@ def _configure_custom_clusters(builder: Any, plan: RuntimePlan) -> bool:
     return True
 
 
+def _standard_custom_cluster_factory(
+    cluster_id: int,
+    attributes: dict[int, tuple[int | str | None, str]],
+) -> type[Any]:
+    """Create a standard ZCL cluster subclass with declarative custom attributes."""
+    import zigpy.types as t  # type: ignore
+    from zigpy.zcl.foundation import BaseAttributeDefs, ZCLAttributeDef  # type: ignore
+
+    from zigpy.zcl.clusters import closures, general, homeautomation, hvac, lighting, measurement, smartenergy  # type: ignore
+
+    standard_bases: dict[int, Any] = {
+        0x0000: general.Basic,
+        0x0001: general.PowerConfiguration,
+        0x0004: general.Groups,
+        0x0005: general.Scenes,
+        0x0006: _tuya_on_off_cluster(),
+        0x0008: general.LevelControl,
+        0x0101: closures.DoorLock,
+        0x0102: closures.WindowCovering,
+        0x0201: hvac.Thermostat,
+        0x0202: hvac.Fan,
+        0x0204: hvac.UserInterface,
+        0x0300: lighting.Color,
+        0x0400: measurement.IlluminanceMeasurement,
+        0x0402: measurement.TemperatureMeasurement,
+        0x0403: measurement.PressureMeasurement,
+        0x0405: measurement.RelativeHumidity,
+        0x0406: measurement.OccupancySensing,
+        0x0B04: homeautomation.ElectricalMeasurement,
+        0x0702: smartenergy.Metering,
+    }
+    base = standard_bases.get(cluster_id)
+    if base is None:
+        raise ValueError(f"unsupported standard cluster 0x{cluster_id:04x}")
+    base_attribute_defs = getattr(base, "AttributeDefs", BaseAttributeDefs)
+
+    zcl_types: dict[int | str, Any] = {
+        0x10: t.Bool,
+        0x18: t.bitmap8,
+        0x20: t.uint8_t,
+        0x21: t.uint16_t,
+        0x22: t.uint24_t,
+        0x28: t.int8s,
+        0x29: t.int16s,
+        0x30: t.enum8,
+        0x38: t.Single,
+    }
+    attribute_defs: dict[str, Any] = {}
+    for attribute_id, (attribute_type, entity_type) in attributes.items():
+        zcl_type = zcl_types.get(attribute_type)
+        if zcl_type is None:
+            zcl_type = {
+                "binary": t.Bool,
+                "enum": t.enum8,
+                "numeric": t.int32s,
+            }.get(entity_type, t.int32s)
+        attribute_defs[f"zha_z2m_attribute_{attribute_id:04x}"] = ZCLAttributeDef(
+            id=attribute_id,
+            type=zcl_type,
+            access="rw",
+        )
+
+    declarative_attribute_defs = type(
+        "AttributeDefs",
+        (base_attribute_defs,),
+        attribute_defs,
+    )
+
+    return type(
+        "DeclarativeStandardCustomCluster",
+        (base,),
+        {"AttributeDefs": declarative_attribute_defs, "cluster_id": cluster_id},
+    )
+
+
 def _custom_cluster_factory(spec: CustomClusterSpec) -> Any:
     """Build a ZHA cluster class from a static converter cluster schema."""
     import zigpy.types as t  # type: ignore
     from zigpy.zcl.foundation import BaseAttributeDefs, BaseCommandDefs, ZCLAttributeDef, ZCLCommandDef  # type: ignore
     from zhaquirks.clusters import CustomCluster  # type: ignore
 
-    from zigpy.zcl.clusters import closures, general, hvac, lighting, measurement  # type: ignore
+    from zigpy.zcl.clusters import closures, general, homeautomation, hvac, lighting, measurement, smartenergy  # type: ignore
 
     standard_bases: dict[int, Any] = {}
     for cluster_id, module, class_name in (
@@ -1647,6 +1793,8 @@ def _custom_cluster_factory(spec: CustomClusterSpec) -> Any:
         (0x0403, measurement, "PressureMeasurement"),
         (0x0405, measurement, "RelativeHumidity"),
         (0x0406, measurement, "OccupancySensing"),
+        (0x0702, smartenergy, "Metering"),
+        (0x0B04, homeautomation, "ElectricalMeasurement"),
     ):
         cluster_class = getattr(module, class_name, None)
         if cluster_class is not None:
