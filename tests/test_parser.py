@@ -17,12 +17,87 @@ from zha_z2m_converters.model import ConfigureAction, Expose
 from zha_z2m_converters.runtime import _apply_configure_actions, _apply_expose, _configure_endpoint_clusters, _make_enum_class
 from zha_z2m_converters.runtime import apply_report, build_runtime_plan, make_write, register_result
 from zha_z2m_converters.runtime import register_with_zha, RuntimeEntity, RuntimeReport
+from zha_z2m_converters.source import (
+    SOURCE_MODE_ALL,
+    SOURCE_MODE_SELECTED,
+    available_source_files,
+    select_source_paths,
+    source_file_key,
+)
+import zha_z2m_converters as integration
+from zha_z2m_converters.config import (
+    CONF_BUNDLED_FILES,
+    CONF_BUNDLED_MODE,
+    CONF_EXTERNAL_FILES,
+    CONF_EXTERNAL_MODE,
+    normalize_settings,
+)
 
 
 ROOT = Path(__file__).parent
 
 
 class ParserTests(unittest.TestCase):
+    def test_source_file_selection_supports_all_and_selected_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            devices = root / "src" / "devices"
+            devices.mkdir(parents=True)
+            (devices / "first.ts").write_text("export const definitions = [];", encoding="utf-8")
+            (devices / "second.ts").write_text("export const definitions = [];", encoding="utf-8")
+
+            self.assertEqual(available_source_files(root), ["src/devices/first.ts", "src/devices/second.ts"])
+            self.assertEqual(
+                [source_file_key(path, root) for path in select_source_paths(root, SOURCE_MODE_ALL, ["src/devices/first.ts"])],
+                ["src/devices/second.ts"],
+            )
+            self.assertEqual(
+                [source_file_key(path, root) for path in select_source_paths(root, SOURCE_MODE_SELECTED, ["src/devices/first.ts"])],
+                ["src/devices/first.ts"],
+            )
+
+    def test_config_entry_settings_default_to_all_files(self) -> None:
+        settings = normalize_settings({CONF_BUNDLED_MODE: SOURCE_MODE_SELECTED, CONF_EXTERNAL_FILES: ["custom.ts", 42]})
+        self.assertEqual(settings[CONF_BUNDLED_MODE], SOURCE_MODE_SELECTED)
+        self.assertEqual(settings[CONF_EXTERNAL_MODE], SOURCE_MODE_ALL)
+        self.assertEqual(settings[CONF_EXTERNAL_FILES], ["custom.ts"])
+        self.assertEqual(settings[CONF_BUNDLED_FILES], [])
+
+    def test_ui_settings_select_bundled_and_external_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            bundled = root / "bundled" / "src" / "devices"
+            external = root / "external"
+            bundled.mkdir(parents=True)
+            external.mkdir()
+            (bundled / "kept.ts").write_text("", encoding="utf-8")
+            (bundled / "disabled.ts").write_text("", encoding="utf-8")
+            (external / "custom.ts").write_text("", encoding="utf-8")
+
+            class Config:
+                def path(self, value: str) -> str:
+                    return str(external if value == integration.DEFAULT_EXTERNAL_SOURCE else root / value)
+
+            class Hass:
+                config = Config()
+
+            original_source = integration.DEFAULT_SOURCE
+            try:
+                integration.DEFAULT_SOURCE = root / "bundled"
+                selected = integration._selected_source_paths(
+                    Hass(),
+                    {
+                        CONF_BUNDLED_MODE: SOURCE_MODE_ALL,
+                        CONF_BUNDLED_FILES: ["src/devices/disabled.ts"],
+                        CONF_EXTERNAL_MODE: SOURCE_MODE_SELECTED,
+                        CONF_EXTERNAL_FILES: ["custom.ts"],
+                    },
+                )
+            finally:
+                integration.DEFAULT_SOURCE = original_source
+
+            self.assertEqual([path.name for path in selected], ["kept.ts", "custom.ts"])
+
     def test_device_selection_supports_multiple_devices_and_full_source(self) -> None:
         source = """
         export const definitions = [

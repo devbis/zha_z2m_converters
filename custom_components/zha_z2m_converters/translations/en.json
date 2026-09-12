@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Converter files",
+        "description": "Choose whether each converter source should load all files or only selected files.",
+        "data": {
+          "bundled_mode": "Bundled converter files",
+          "external_mode": "External converter files"
+        }
+      },
+      "files": {
+        "title": "Select files",
+        "description": "In all-files mode, selected files are excluded. In selected-files mode, selected files are included.",
+        "data": {
+          "bundled_files": "Bundled files",
+          "external_files": "External files"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "The integration is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Converter files",
+        "description": "Choose whether each converter source should load all files or only selected files.",
+        "data": {
+          "bundled_mode": "Bundled converter files",
+          "external_mode": "External converter files"
+        }
+      },
+      "files": {
+        "title": "Select files",
+        "description": "In all-files mode, selected files are excluded. In selected-files mode, selected files are included.",
+        "data": {
+          "bundled_files": "Bundled files",
+          "external_files": "External files"
+        }
+      }
+    }
+  }
+}

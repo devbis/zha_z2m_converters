@@ -45,23 +45,33 @@ If the project is not available in the HACS index yet, add the GitHub
 repository as a custom HACS repository with category **Integration**, then
 install it and restart Home Assistant.
 
-### Basic configuration
+### UI configuration
 
-Add this single entry to `configuration.yaml`:
+After installing the integration, open **Settings → Devices & services → Add
+integration**, search for **ZHA Z2M Converters**, and follow the two-step flow.
+
+By default, all bundled converter files and all TypeScript files found in
+`external_converters` are enabled. The flow also supports a selected-files
+mode, or an exclusion list in all-files mode. Settings can be changed later
+from the integration's **Configure** action.
+
+## Configuration
+
+The UI configuration is the recommended setup. The legacy YAML configuration
+remains available as a fallback for existing installations that do not have a
+config entry.
+
+### Legacy YAML configuration
+
+Add this entry to `configuration.yaml` only when no UI config entry exists:
 
 ```yaml
 zha_z2m_converters:
 ```
 
-Restart Home Assistant again. The integration will load all definitions from
-the converter snapshot bundled with the component.
+Restart Home Assistant after changing the YAML configuration.
 
-## Configuration
-
-The default configuration is enough for normal use. Optional settings are
-available when testing selected devices or adding local converter definitions.
-
-### Select specific devices
+The legacy YAML path still supports selecting specific devices:
 
 Use `devices` to register only selected definitions while validating a device:
 
@@ -87,8 +97,9 @@ Place user-provided TypeScript definitions in:
 ```
 
 All `.ts` files in that directory are loaded together with the bundled
-snapshot. The path is resolved through Home Assistant's actual configuration
-directory and is not hardcoded to `/config`.
+snapshot by default. The UI can exclude individual files or switch the
+external source to selected-files mode. The path is resolved through Home
+Assistant's actual configuration directory and is not hardcoded to `/config`.
 
 To use another location, set `external_source`:
 
@@ -101,7 +112,7 @@ Relative paths are resolved from Home Assistant's configuration directory.
 The external directory is outside `custom_components`, so HACS updates do not
 modify user-provided converters.
 
-### Custom bundled source
+### Custom bundled source (legacy YAML only)
 
 The bundled snapshot is used automatically. A different source directory can
 be selected with `source`:

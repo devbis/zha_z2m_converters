@@ -24,4 +24,4 @@ zha-z2m-converters-coverage = "zha_z2m_converters.coverage:main"
 where = ["custom_components"]
 
 [tool.setuptools.package-data]
-zha_z2m_converters = ["py.typed", "manifest.json"]
+zha_z2m_converters = ["py.typed", "manifest.json", "strings.json", "translations/*.json"]
