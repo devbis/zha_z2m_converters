@@ -1411,6 +1411,20 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual([name for name, _ in calls], ["switch"])
 
+    def test_expose_without_cluster_mapping_does_not_abort_registration(self) -> None:
+        calls = []
+
+        class Builder:
+            def sensor(self, attribute_name, cluster_id, **kwargs):
+                calls.append((attribute_name, cluster_id, kwargs))
+
+        _apply_expose(
+            Builder(),
+            Expose("numeric", "unknown_value", "unknown_value", ("state",)),
+            RuntimeEntity("unknown_value", "numeric", "unknown_value", None, None),
+        )
+        self.assertEqual(calls, [])
+
     def test_enum_expose_uses_integer_values_for_zha_select(self) -> None:
         enum_class = _make_enum_class(
             Expose("enum", "power_outage_memory", values=("off", "previous", "on"))

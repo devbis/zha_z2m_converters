@@ -1251,6 +1251,13 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
         kwargs["unit"] = _zha_unit(expose.unit)
     if entity.cluster is not None:
         kwargs["cluster_id"] = ZCL_CLUSTER_IDS.get(entity.cluster, entity.cluster) if isinstance(entity.cluster, str) else entity.cluster
+    if "cluster_id" not in kwargs:
+        # A converter can expose a value without a statically known ZHA
+        # cluster. Current QuirkBuilder entity methods require both cluster
+        # and attribute arguments, so do not let one unsupported expose abort
+        # registration of the complete converter registry.
+        _LOGGER.debug("Skipping expose %s without a static cluster mapping", expose.name)
+        return
     try:
         method(**kwargs)
     except TypeError:
@@ -1260,9 +1267,12 @@ def _apply_expose(builder: Any, expose: Any, entity: RuntimeEntity) -> None:
         attribute_name = kwargs.pop("attribute_name", expose.property or expose.name)
         cluster_id = kwargs.pop("cluster_id", None)
         if cluster_id is None:
-            method(fallback_name=expose.name)
+            _LOGGER.debug("Skipping expose %s without a static cluster mapping", expose.name)
         else:
-            method(attribute_name, cluster_id, **kwargs)
+            try:
+                method(attribute_name, cluster_id, **kwargs)
+            except TypeError:
+                _LOGGER.debug("Skipping expose %s: incompatible QuirkBuilder signature", expose.name, exc_info=True)
 
 
 def _make_enum_class(expose: Expose) -> type[IntEnum] | None:
