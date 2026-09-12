@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 from types import ModuleType
+from types import MappingProxyType
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -16,7 +17,7 @@ from zha_z2m_converters.parser import parse_path, parse_paths, parse_source
 from zha_z2m_converters.model import ConfigureAction, CustomClusterSpec, DeviceDefinition, Expose
 from zha_z2m_converters.runtime import _apply_configure_actions, _apply_expose, _configure_custom_clusters, _configure_endpoint_clusters, _make_enum_class
 from zha_z2m_converters.runtime import apply_report, build_runtime_plan, make_write, register_result
-from zha_z2m_converters.runtime import register_with_zha, RuntimeEntity, RuntimePlan, RuntimeReport
+from zha_z2m_converters.runtime import _device_signatures, register_with_zha, RuntimeEntity, RuntimePlan, RuntimeReport
 from zha_z2m_converters.source import (
     SOURCE_MODE_ALL,
     SOURCE_MODE_SELECTED,
@@ -38,6 +39,18 @@ ROOT = Path(__file__).parent
 
 
 class ParserTests(unittest.TestCase):
+    def test_zha_signatures_use_reported_zigbee_models(self) -> None:
+        device = DeviceDefinition(
+            manufacturer="Slacky-DIY",
+            model="TS011F_plug-SlD",
+            zigbee_models=["TS011F-SlD"],
+        )
+
+        self.assertEqual(
+            _device_signatures(device),
+            [{"manufacturerName": "Slacky-DIY", "modelID": "TS011F-SlD"}],
+        )
+
     def test_source_file_selection_supports_all_and_selected_modes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -62,6 +75,18 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(settings[CONF_EXTERNAL_MODE], SOURCE_MODE_ALL)
         self.assertEqual(settings[CONF_EXTERNAL_FILES], ["custom.ts"])
         self.assertEqual(settings[CONF_BUNDLED_FILES], [])
+
+    def test_config_entry_settings_accept_mapping_proxy(self) -> None:
+        settings = normalize_settings(
+            MappingProxyType(
+                {
+                    CONF_BUNDLED_MODE: SOURCE_MODE_SELECTED,
+                    CONF_BUNDLED_FILES: ["src/devices/slacky_diy.ts"],
+                }
+            )
+        )
+        self.assertEqual(settings[CONF_BUNDLED_MODE], SOURCE_MODE_SELECTED)
+        self.assertEqual(settings[CONF_BUNDLED_FILES], ["src/devices/slacky_diy.ts"])
 
     def test_ui_settings_select_bundled_and_external_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -892,7 +917,7 @@ class ParserTests(unittest.TestCase):
                 calls.append(("register",))
 
         register_with_zha(registry, Builder)
-        self.assertEqual(calls[0], ("init", "Example", "Test Plug"))
+        self.assertEqual(calls[0], ("init", "Example", "TEST-PLUG"))
         self.assertEqual([item[0] for item in calls], ["init", "switch", "sensor", "register"])
         self.assertEqual(prevented_clusters, [0x0B04, 0x0702])
 

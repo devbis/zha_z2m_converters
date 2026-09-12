@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from .source import SOURCE_MODE_ALL, SOURCE_MODE_SELECTED
@@ -22,10 +23,10 @@ def default_settings() -> dict[str, Any]:
     }
 
 
-def normalize_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
+def normalize_settings(settings: Mapping[str, Any] | None) -> dict[str, Any]:
     """Merge persisted settings with defaults and discard malformed values."""
     normalized = default_settings()
-    if not isinstance(settings, dict):
+    if not isinstance(settings, Mapping):
         return normalized
     for key in (CONF_BUNDLED_MODE, CONF_EXTERNAL_MODE):
         value = settings.get(key)

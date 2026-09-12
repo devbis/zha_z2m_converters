@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from enum import IntEnum
 import logging
 import math
+import threading
 from typing import Any
 
 from .mapping import normalize_device
@@ -139,9 +140,111 @@ class RuntimeRegistry:
 
     devices: list[DeviceDefinition] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    zha_entries: list[Any] = field(default_factory=list, repr=False)
 
     def add(self, device: DeviceDefinition) -> None:
         self.devices.append(normalize_device(device))
+
+
+class _CapturedZhaRegistry:
+    """Capture a compiled ZHA entry without publishing it globally."""
+
+    def __init__(self) -> None:
+        self.entries: list[Any] = []
+
+    def register(self, entry: Any) -> Any:
+        """Capture the entry created by QuirkBuilder.add_to_registry."""
+        self.entries.append(entry)
+        return entry
+
+
+class _LazyZhaEntry:
+    """Compile one converter only when ZHA resolves a matching device."""
+
+    def __init__(self, device: DeviceDefinition, signature: dict[str, str], builder_factory: Any) -> None:
+        self.device = device
+        self.signature = signature
+        self.builder_factory = builder_factory
+        self._compiled: Any | None = None
+        self._lock = threading.Lock()
+
+    def compile(self) -> Any:
+        """Build and cache the full QuirkRegistryEntry."""
+        if self._compiled is None:
+            with self._lock:
+                if self._compiled is None:
+                    captured = _CapturedZhaRegistry()
+                    _build_zha_entry(
+                        self.device,
+                        self.signature,
+                        self.builder_factory,
+                        captured,
+                    )
+                    if len(captured.entries) != 1:
+                        raise RuntimeError("QuirkBuilder did not produce exactly one registry entry")
+                    self._compiled = captured.entries[0]
+                    _LOGGER.debug(
+                        "Compiled lazy converter for %s / %s",
+                        self.signature["manufacturerName"],
+                        self.signature["modelID"],
+                    )
+        return self._compiled
+
+    def transform(self, device: Any) -> Any:
+        """Apply the lazily compiled zigpy transforms."""
+        compiled = self.compile()
+        for transform in compiled.zigpy_transforms:
+            device = transform(device)
+        return device
+
+    def make_device(self, *args: Any, **kwargs: Any) -> Any:
+        """Create the ZHA device from the lazily compiled factory."""
+        factory = self.compile().zha_device_factory
+        if factory is None:
+            raise RuntimeError("Lazy converter did not produce a ZHA device factory")
+        return factory(*args, **kwargs)
+
+
+class _StandardQuirkIndex:
+    """Lazily snapshot standard quirks after ZHA finishes its bootstrap."""
+
+    def __init__(self, zha_registry: Any) -> None:
+        self.zha_registry = zha_registry
+        self._by_key: dict[tuple[str | None, str | None], list[Any]] | None = None
+        self._lock = threading.Lock()
+
+    def _ensure_loaded(self) -> None:
+        if self._by_key is not None:
+            return
+        with self._lock:
+            if self._by_key is not None:
+                return
+            by_key: dict[tuple[str | None, str | None], list[Any]] = {}
+            for entry in self.zha_registry:
+                source = getattr(entry, "source", None)
+                if source is not None and getattr(source, "module", None) == __name__:
+                    continue
+                for key in entry.device_match.applies_to:
+                    by_key.setdefault(tuple(key), []).append(entry)
+                if not entry.device_match.applies_to:
+                    by_key.setdefault((None, None), []).append(entry)
+            self._by_key = by_key
+
+    def matches(self, device: Any, keys: tuple[tuple[str | None, str | None], ...]) -> bool:
+        """Return whether a standard entry matches a device."""
+        self._ensure_loaded()
+        return any(
+            entry.device_match.matches(device)
+            for key in keys
+            for entry in self._by_key.get(key, ())
+        )
+
+
+def _default_builder_factory(*args: Any) -> Any:
+    """Create QuirkBuilder without importing zhaquirks during startup."""
+    from zhaquirks.builder import QuirkBuilder  # type: ignore
+
+    return QuirkBuilder(*args)
 
 
 def build_runtime_plan(device: DeviceDefinition, manufacturer_name: str | None = None) -> RuntimePlan:
@@ -824,8 +927,69 @@ def register_result(result: ParseResult) -> RuntimeRegistry:
     return registry
 
 
+def _device_signatures(device: DeviceDefinition) -> list[dict[str, str]]:
+    """Return the concrete manufacturer/model pairs represented by a definition.
+
+    ``model`` is the friendly model name used by zigbee-herdsman-converters,
+    while ``zigbeeModel`` contains the model IDs reported by the device. ZHA
+    must match the latter. Fingerprints remain more specific and therefore
+    take precedence when present.
+    """
+    signatures = device.fingerprints or [
+        {"manufacturerName": device.manufacturer, "modelID": model}
+        for model in (device.zigbee_models or [device.model])
+    ]
+    return [
+        signature
+        for signature in signatures
+        if isinstance(signature.get("manufacturerName"), str)
+        and isinstance(signature.get("modelID"), str)
+    ]
+
+
+def _build_zha_entry(
+    device: DeviceDefinition,
+    signature: dict[str, str],
+    builder_factory: Any,
+    target_registry: Any | None = None,
+) -> Any:
+    """Compile one definition into a ZHA registry entry."""
+    plan = build_runtime_plan(device, signature.get("manufacturerName"))
+    builder = builder_factory(signature["manufacturerName"], signature["modelID"])
+    _configure_endpoint_clusters(builder, plan)
+    _prevent_unrepresented_default_entities(builder, plan)
+    _configure_builder_device_class(builder, plan.configure_actions)
+    custom_clusters_ready = _configure_custom_clusters(builder, plan)
+    for expose, entity in zip(plan.device.exposes, plan.entities, strict=False):
+        if _is_default_measurement_entity(entity):
+            continue
+        if _requires_custom_cluster(plan, entity) and not custom_clusters_ready:
+            continue
+        _apply_expose(builder, expose, entity)
+
+    add_to_registry = getattr(builder, "add_to_registry", None)
+    if not callable(add_to_registry):
+        raise RuntimeError("ZHA QuirkBuilder does not expose add_to_registry")
+
+    if target_registry is None:
+        return add_to_registry()
+
+    # Current ZHA accepts a registry argument. The fallback keeps the adapter
+    # usable with small test doubles and older builder implementations.
+    try:
+        result = add_to_registry(target_registry)
+    except TypeError:
+        result = add_to_registry()
+    if result is not None:
+        return result
+    entries = getattr(target_registry, "entries", ())
+    if len(entries) == 1:
+        return entries[0]
+    return None
+
+
 def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = None) -> RuntimeRegistry:
-    """Register the portable IR through a supplied QuirkBuilder factory.
+    """Eagerly register the portable IR through a supplied QuirkBuilder factory.
 
     The adapter is deliberately duck-typed so importing this package does not
     require Home Assistant. A production integration supplies the current
@@ -838,26 +1002,102 @@ def register_with_zha(registry: RuntimeRegistry, builder_factory: Any | None = N
             raise RuntimeError("ZHA is not installed; pass builder_factory explicitly") from exc
         builder_factory = QuirkBuilder
     for device in registry.devices:
-        if not device.manufacturer or not device.model:
-            continue
-        signatures = device.fingerprints or [{"manufacturerName": device.manufacturer, "modelID": device.model}]
-        for signature in signatures:
-            plan = build_runtime_plan(device, signature.get("manufacturerName"))
-            builder = builder_factory(signature["manufacturerName"], signature["modelID"])
-            _configure_endpoint_clusters(builder, plan)
-            _prevent_unrepresented_default_entities(builder, plan)
-            _configure_builder_device_class(builder, plan.configure_actions)
-            custom_clusters_ready = _configure_custom_clusters(builder, plan)
-            for expose, entity in zip(plan.device.exposes, plan.entities, strict=False):
-                if _is_default_measurement_entity(entity):
-                    continue
-                if _requires_custom_cluster(plan, entity) and not custom_clusters_ready:
-                    continue
-                _apply_expose(builder, expose, entity)
-            add_to_registry = getattr(builder, "add_to_registry", None)
-            if callable(add_to_registry):
-                add_to_registry()
+        for signature in _device_signatures(device):
+            _build_zha_entry(device, signature, builder_factory)
     return registry
+
+
+def register_lazy_with_zha(
+    registry: RuntimeRegistry,
+    builder_factory: Any | None = None,
+    zha_registry: Any | None = None,
+) -> RuntimeRegistry:
+    """Register lightweight matches and compile converters only on resolution.
+
+    Parsing and indexing all selected files is cheap, while constructing every
+    QuirkBuilder can be very expensive. Each registered entry therefore keeps
+    only a static match and a lazy compiler. Standard ZHA entries already in
+    the registry are treated as higher-priority fallbacks when this component
+    is loaded late.
+    """
+    if builder_factory is None or zha_registry is None:
+        try:
+            from zha.quirks import DEVICE_REGISTRY  # type: ignore
+            from zha.quirks import DeviceMatch, ModelInfo, QuirkRegistryEntry, QuirkSource  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("ZHA is not installed; pass builder_factory and zha_registry explicitly") from exc
+        if builder_factory is None:
+            builder_factory = _default_builder_factory
+        if zha_registry is None:
+            zha_registry = DEVICE_REGISTRY
+    else:
+        try:
+            from zha.quirks import DeviceMatch, ModelInfo, QuirkRegistryEntry, QuirkSource  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("ZHA is not installed; pass a compatible registry implementation") from exc
+
+    standard_index = _StandardQuirkIndex(zha_registry)
+
+    registered = 0
+    for device in registry.devices:
+        for signature in _device_signatures(device):
+            manufacturer = signature["manufacturerName"]
+            model = signature["modelID"]
+            lazy = _LazyZhaEntry(device, signature, builder_factory)
+            keys = (
+                (manufacturer, model),
+                (manufacturer, None),
+                (None, model),
+                (None, None),
+            )
+
+            def standard_matches(
+                zigpy_device: Any,
+                *,
+                keys: tuple[tuple[str | None, str | None], ...] = keys,
+            ) -> bool:
+                """Keep a late-loaded zha-z2m entry behind standard quirks."""
+                return standard_index.matches(zigpy_device, keys)
+
+            entry = QuirkRegistryEntry(
+                device_match=DeviceMatch(
+                    applies_to=(ModelInfo(manufacturer, model),),
+                    filters=(lambda zigpy_device, match=standard_matches: not match(zigpy_device),),
+                ),
+                zigpy_transforms=(lazy.transform,),
+                zha_device_factory=lazy.make_device,
+                source=QuirkSource(
+                    module=__name__,
+                    file=device.source,
+                    line=device.source_line,
+                    label=f"{manufacturer} / {model}",
+                ),
+            )
+            zha_registry.register(entry)
+            registry.zha_entries.append(entry)
+            registered += 1
+
+    _LOGGER.info("Registered %d lazy converter matches", registered)
+    return registry
+
+
+def unregister_from_zha(registry: RuntimeRegistry, zha_registry: Any | None = None) -> None:
+    """Remove lazy entries owned by a runtime registry during unload."""
+    if zha_registry is None:
+        try:
+            from zha.quirks import DEVICE_REGISTRY  # type: ignore
+        except ImportError:
+            return
+        zha_registry = DEVICE_REGISTRY
+    remove = getattr(zha_registry, "remove", None)
+    if not callable(remove):
+        return
+    for entry in registry.zha_entries:
+        try:
+            remove(entry)
+        except (KeyError, ValueError):
+            _LOGGER.debug("Lazy converter entry was already removed", exc_info=True)
+    registry.zha_entries.clear()
 
 
 _DEFAULT_MEASUREMENT_ATTRIBUTES = {

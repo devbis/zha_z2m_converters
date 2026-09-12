@@ -17,7 +17,9 @@ from .runtime import (
     apply_report,
     build_runtime_plan,
     make_write,
+    register_lazy_with_zha,
     register_result,
+    unregister_from_zha,
     register_with_zha,
 )
 from .source import (
@@ -129,7 +131,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
     result = await hass.async_add_executor_job(parse_paths, sources)
     result.devices = _select_devices(result.devices, domain_config.get("devices"))
     registry = register_result(result)
-    await hass.async_add_executor_job(register_with_zha, registry)
+    await hass.async_add_executor_job(register_lazy_with_zha, registry)
     hass.data.setdefault(DOMAIN, {})["yaml_loaded"] = True
     _LOGGER.info("Registered %d declarative converter definitions from %s", len(registry.devices), ", ".join(map(str, sources)))
     return True
@@ -173,7 +175,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     source_paths = await hass.async_add_executor_job(_selected_source_paths, hass, settings)
     result = await hass.async_add_executor_job(parse_paths, source_paths)
     registry = register_result(result)
-    await hass.async_add_executor_job(register_with_zha, registry)
+    await hass.async_add_executor_job(register_lazy_with_zha, registry)
     runtime_data[entry.entry_id] = registry
     _LOGGER.info("Registered %d declarative converter definitions from UI-selected files", len(registry.devices))
     return True
@@ -183,7 +185,9 @@ async def async_unload_entry(hass: Any, entry: Any) -> bool:
     """Forget the in-memory entry data when Home Assistant unloads the entry."""
     runtime_data = hass.data.get(DOMAIN, {})
     if isinstance(runtime_data, dict):
-        runtime_data.pop(entry.entry_id, None)
+        registry = runtime_data.pop(entry.entry_id, None)
+        if registry is not None:
+            await hass.async_add_executor_job(unregister_from_zha, registry)
     return True
 
 
@@ -218,6 +222,8 @@ __all__ = [
     "parse_paths",
     "parse_source",
     "register_result",
+    "register_lazy_with_zha",
+    "unregister_from_zha",
     "register_with_zha",
     "async_setup_entry",
     "async_unload_entry",
